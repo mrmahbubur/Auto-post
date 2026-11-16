@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, CheckCircle2, KeyRound, Loader2, LogOut, Shield, ShieldAlert } from "lucide-react";
-import { api, clearApiBaseUrl, getApiBaseUrl, setApiBaseUrl } from "../api";
+import { api, clearApiBaseUrl, getApiBaseUrl, probeApiBaseUrl, setApiBaseUrl } from "../api";
 import type { BootstrapState } from "../types";
 
 interface AccountViewProps {
@@ -26,6 +26,7 @@ export function AccountView({ state, onStateChange, onSignedOut, onServerChanged
   const [updatingLock, setUpdatingLock] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState(false);
   const [endpointInput, setEndpointInput] = useState(() => getApiBaseUrl());
+  const [checkingEndpoint, setCheckingEndpoint] = useState(false);
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -177,36 +178,55 @@ export function AccountView({ state, onStateChange, onSignedOut, onServerChanged
 
           {editingEndpoint && (
             <form
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
-                setApiBaseUrl(endpointInput);
-                setEditingEndpoint(false);
-                onServerChanged?.();
+                setErrorMsg("");
+                if (!endpointInput.trim()) {
+                  clearApiBaseUrl();
+                  setEditingEndpoint(false);
+                  onServerChanged?.();
+                  return;
+                }
+                setCheckingEndpoint(true);
+                try {
+                  const { url } = await probeApiBaseUrl(endpointInput);
+                  setApiBaseUrl(url);
+                  setEndpointInput(url);
+                  setEditingEndpoint(false);
+                  onServerChanged?.();
+                } catch (err) {
+                  setErrorMsg(err instanceof Error ? err.message : "Could not reach backend URL");
+                } finally {
+                  setCheckingEndpoint(false);
+                }
               }}
               className="flex flex-wrap items-center gap-2 pt-1"
             >
               <input
-                type="url"
+                type="text"
                 value={endpointInput}
                 onChange={(e) => setEndpointInput(e.target.value)}
-                placeholder="https://your-autopost-server.run.app"
+                placeholder="https://your-autopost-server.run.app or localhost:3000"
                 className="flex-1 min-w-[200px] h-9 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
               <button
                 type="submit"
-                className="h-9 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer"
+                disabled={checkingEndpoint}
+                className="inline-flex items-center gap-1.5 h-9 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg cursor-pointer"
               >
-                Save &amp; Reconnect
+                {checkingEndpoint && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>{checkingEndpoint ? "Verifying..." : "Verify & Save"}</span>
               </button>
               <button
                 type="button"
+                disabled={checkingEndpoint}
                 onClick={() => {
                   clearApiBaseUrl();
                   setEndpointInput("");
                   setEditingEndpoint(false);
                   onServerChanged?.();
                 }}
-                className="h-9 px-3 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                className="h-9 px-3 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 rounded-lg cursor-pointer"
               >
                 Same-Origin
               </button>

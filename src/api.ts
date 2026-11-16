@@ -36,7 +36,9 @@ export function normalizeApiBaseUrl(raw: string): string {
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    const pathname = parsed.pathname.replace(/\/+$/, "");
+    const pathname = parsed.pathname
+      .replace(/\/api(\/auth\/status)?\/?$/i, "")
+      .replace(/\/+$/, "");
     return `${parsed.origin}${pathname === "/" ? "" : pathname}`;
   } catch {
     return "";
