@@ -217,12 +217,12 @@ async function startServer() {
       const origin = req.headers.origin;
       if (origin && /^https?:\/\//i.test(origin)) {
         res.setHeader("Access-Control-Allow-Origin", origin);
-        res.setHeader("Vary", "Origin");
+        res.setHeader("Vary", "Origin, Access-Control-Request-Private-Network");
         res.setHeader("Access-Control-Allow-Credentials", "true");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         res.setHeader("Access-Control-Max-Age", "86400");
-        if (req.headers["access-control-request-private-network"] === "true") {
+        if (String(req.headers["access-control-request-private-network"] || "").toLowerCase() === "true") {
           res.setHeader("Access-Control-Allow-Private-Network", "true");
         }
       }

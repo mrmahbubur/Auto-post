@@ -24,35 +24,87 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   unauthorizedHandler = fn;
 }
 
-export function getApiBaseUrl(): string {
+function normalizeApiBaseUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return "";
   try {
-    if (typeof window !== "undefined" && window.location?.search) {
-      const paramApi = new URLSearchParams(window.location.search).get("api");
-      if (paramApi && /^https?:\/\//i.test(paramApi.trim())) {
-        const clean = paramApi.trim().replace(/\/+$/, "");
-        localStorage.setItem(API_BASE_STORAGE_KEY, clean);
-        return clean;
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    return `${parsed.origin}${pathname === "/" ? "" : pathname}`;
+  } catch {
+    return "";
+  }
+}
+
+function stripApiSearchParamsFromUrl(): void {
+  try {
+    if (typeof window === "undefined" || !window.history?.replaceState || !window.location?.search) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    let changed = false;
+    for (const key of ["api", "backend", "apiBase"]) {
+      if (url.searchParams.has(key)) {
+        url.searchParams.delete(key);
+        changed = true;
       }
     }
-    const saved = localStorage.getItem(API_BASE_STORAGE_KEY);
-    if (saved && /^https?:\/\//i.test(saved.trim())) {
-      return saved.trim().replace(/\/+$/, "");
+    if (changed) {
+      window.history.replaceState({}, "", url.pathname + (url.search ? url.search : "") + url.hash);
     }
+  } catch {
+    // Ignore history replace failures
+  }
+}
+
+function initApiBaseFromSearchParams(): void {
+  try {
+    if (typeof window === "undefined" || !window.location?.search) return;
+    const params = new URLSearchParams(window.location.search);
+    const paramKey = ["api", "backend", "apiBase"].find((k) => params.has(k));
+    if (!paramKey) return;
+
+    const raw = (params.get(paramKey) || "").trim();
+    if (!raw || raw === "reset" || raw === "local" || raw === "same-origin") {
+      localStorage.removeItem(API_BASE_STORAGE_KEY);
+      stripApiSearchParamsFromUrl();
+      return;
+    }
+
+    const normalized = normalizeApiBaseUrl(raw);
+    if (normalized) {
+      localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
+      stripApiSearchParamsFromUrl();
+    }
+  } catch {
+    // Ignore search/storage access errors
+  }
+}
+
+initApiBaseFromSearchParams();
+
+export function getApiBaseUrl(): string {
+  try {
+    const saved = localStorage.getItem(API_BASE_STORAGE_KEY);
+    const normalized = saved ? normalizeApiBaseUrl(saved) : "";
+    if (normalized) return normalized;
   } catch {
     // Ignore storage access errors
   }
   const envBase = (import.meta.env?.VITE_API_BASE_URL as string | undefined) || "";
-  return envBase ? envBase.trim().replace(/\/+$/, "") : "";
+  return envBase ? normalizeApiBaseUrl(envBase) : "";
 }
 
 export function setApiBaseUrl(url: string): void {
   try {
-    const clean = url.trim().replace(/\/+$/, "");
-    if (clean && /^https?:\/\//i.test(clean)) {
-      localStorage.setItem(API_BASE_STORAGE_KEY, clean);
+    const normalized = normalizeApiBaseUrl(url);
+    if (normalized) {
+      localStorage.setItem(API_BASE_STORAGE_KEY, normalized);
     } else {
       localStorage.removeItem(API_BASE_STORAGE_KEY);
     }
+    stripApiSearchParamsFromUrl();
   } catch {
     // Ignore storage access errors
   }
