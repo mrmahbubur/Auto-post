@@ -1,15 +1,23 @@
 import { useState } from "react";
-import { AlertCircle, Eye, EyeOff, KeyRound, Lock, Server, ShieldCheck, UserPlus } from "lucide-react";
-import { api, clearApiBaseUrl, getApiBaseUrl, setApiBaseUrl } from "../api";
+import { AlertCircle, Eye, EyeOff, KeyRound, Loader2, Lock, Server, ShieldCheck, UserPlus } from "lucide-react";
+import { api, clearApiBaseUrl, getApiBaseUrl, probeApiBaseUrl, setApiBaseUrl } from "../api";
 import type { AuthStatus, AuthUser } from "../types";
 
 interface AuthScreenProps {
   status: AuthStatus;
   onAuthenticated: (user: AuthUser) => void;
   onServerChanged?: () => void;
+  backendDisconnected?: boolean;
+  connectionError?: string;
 }
 
-export function AuthScreen({ status, onAuthenticated, onServerChanged }: AuthScreenProps) {
+export function AuthScreen({
+  status,
+  onAuthenticated,
+  onServerChanged,
+  backendDisconnected = false,
+  connectionError = "",
+}: AuthScreenProps) {
   const initialMode: "login" | "signup" = !status.hasUsers ? "signup" : "login";
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [name, setName] = useState("");
@@ -21,6 +29,24 @@ export function AuthScreen({ status, onAuthenticated, onServerChanged }: AuthScr
   const [errorMsg, setErrorMsg] = useState("");
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [serverInput, setServerInput] = useState(() => getApiBaseUrl());
+  const [probingServer, setProbingServer] = useState(false);
+  const [probeError, setProbeError] = useState("");
+
+  async function handleConnectServer(candidateUrl: string) {
+    setProbeError("");
+    setProbingServer(true);
+    try {
+      const { url } = await probeApiBaseUrl(candidateUrl);
+      setApiBaseUrl(url);
+      setServerInput(url);
+      setShowServerConfig(false);
+      onServerChanged?.();
+    } catch (err) {
+      setProbeError(err instanceof Error ? err.message : "Could not reach AutoPost backend.");
+    } finally {
+      setProbingServer(false);
+    }
+  }
 
   const signupDisabled = status.hasUsers && !status.allowSignups;
 
@@ -120,23 +146,35 @@ export function AuthScreen({ status, onAuthenticated, onServerChanged }: AuthScr
             </label>
             <input
               id="auth-api-url"
-              type="url"
+              type="text"
               value={serverInput}
               onChange={(e) => setServerInput(e.target.value)}
-              placeholder="https://your-autopost-server.run.app (leave blank for same-origin)"
+              placeholder="https://your-autopost-server.run.app or localhost:3000"
               className="flex-1 min-w-[240px] h-9 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button
               type="submit"
-              className="h-9 px-3.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer"
+              disabled={probingServer}
+              onClick={(e) => {
+                e.preventDefault();
+                if (!serverInput.trim()) {
+                  clearApiBaseUrl();
+                  setShowServerConfig(false);
+                  onServerChanged?.();
+                } else {
+                  handleConnectServer(serverInput);
+                }
+              }}
+              className="h-9 px-3.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg cursor-pointer"
             >
-              Apply
+              {probingServer ? "Checking..." : "Apply"}
             </button>
             <button
               type="button"
               onClick={() => {
                 clearApiBaseUrl();
                 setServerInput("");
+                setProbeError("");
                 setShowServerConfig(false);
                 onServerChanged?.();
               }}
@@ -187,8 +225,94 @@ export function AuthScreen({ status, onAuthenticated, onServerChanged }: AuthScr
             </div>
           </div>
 
-          {/* Right column: Focused Login / Signup Card */}
+          {/* Right column: Backend Connection Setup or Sign In / Signup Card */}
           <div className="lg:col-span-6">
+            {backendDisconnected || connectionError ? (
+              <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 space-y-5">
+                <div className="space-y-1.5 pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-blue-700">
+                    <Server className="w-4 h-4 shrink-0" />
+                    <span>Static Frontend Hosting</span>
+                  </div>
+                  <h2 className="text-lg font-semibold text-slate-900">
+                    Connect Your AutoPost Backend
+                  </h2>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    GitHub Pages serves static HTML/JS only. Point this console to your running AutoPost Node server (Cloud Run, Render, VPS, or local <code className="font-mono">npm start</code>) where SQLite, Gravatar daily scheduling, and Gemini run.
+                  </p>
+                </div>
+
+                {(probeError || connectionError) && (
+                  <div className="flex items-start gap-2.5 bg-red-50 border border-red-200 text-red-800 px-3.5 py-2.5 rounded-lg text-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-600" />
+                    <span>{probeError || connectionError}</span>
+                  </div>
+                )}
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleConnectServer(serverInput);
+                  }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label htmlFor="connect-api-url" className="block text-xs font-medium text-slate-700 mb-1.5">
+                      AutoPost Backend URL
+                    </label>
+                    <input
+                      id="connect-api-url"
+                      type="text"
+                      required
+                      value={serverInput}
+                      onChange={(e) => setServerInput(e.target.value)}
+                      placeholder="https://your-autopost-server.run.app or localhost:3000"
+                      className="w-full h-10 px-3.5 text-sm font-mono bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="submit"
+                      disabled={probingServer}
+                      className="h-10 px-4 inline-flex items-center justify-center gap-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                    >
+                      {probingServer && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>{probingServer ? "Verifying Backend..." : "Connect & Verify Server"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={probingServer}
+                      onClick={() => handleConnectServer("http://localhost:3000")}
+                      className="h-10 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                    >
+                      Try localhost:3000
+                    </button>
+                    {getApiBaseUrl() && (
+                      <button
+                        type="button"
+                        disabled={probingServer}
+                        onClick={() => {
+                          clearApiBaseUrl();
+                          setServerInput("");
+                          setProbeError("");
+                          onServerChanged?.();
+                        }}
+                        className="h-10 px-3 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+                      >
+                        Reset Same-Origin
+                      </button>
+                    )}
+                  </div>
+                </form>
+
+                <div className="border-t border-slate-100 pt-4 text-[11px] text-slate-500 space-y-1 leading-relaxed">
+                  <p>
+                    Tip: Share links as <code className="font-mono text-slate-700">?api=https://your-server</code>, or set the GitHub Actions variable <code className="font-mono text-slate-700">VITE_API_BASE_URL</code> so static builds auto-connect on load.
+                  </p>
+                </div>
+              </div>
+            ) : (
             <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 space-y-6">
               <div className="flex items-center justify-between gap-4 pb-4 border-b border-slate-100">
                 <div>
@@ -356,6 +480,7 @@ export function AuthScreen({ status, onAuthenticated, onServerChanged }: AuthScr
                 </button>
               </form>
             </div>
+            )}
           </div>
         </div>
       </main>

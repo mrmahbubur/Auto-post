@@ -24,9 +24,15 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   unauthorizedHandler = fn;
 }
 
-function normalizeApiBaseUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return "";
+export function normalizeApiBaseUrl(raw: string): string {
+  let trimmed = raw.trim();
+  if (!trimmed) return "";
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    const isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(
+      trimmed
+    );
+    trimmed = `${isLocal ? "http" : "https"}://${trimmed}`;
+  }
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
@@ -34,6 +40,45 @@ function normalizeApiBaseUrl(raw: string): string {
     return `${parsed.origin}${pathname === "/" ? "" : pathname}`;
   } catch {
     return "";
+  }
+}
+
+export async function probeApiBaseUrl(raw: string): Promise<{ url: string; status: AuthStatus }> {
+  const url = normalizeApiBaseUrl(raw);
+  if (!url) {
+    throw new Error("Enter a valid http:// or https:// AutoPost server URL.");
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 7000);
+  try {
+    const res = await fetch(`${url}/api/auth/status`, {
+      credentials: "omit",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+    });
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(
+        `Received ${contentType || `HTTP ${res.status}`} instead of JSON from ${url}/api/auth/status. Make sure this URL points to your running AutoPost Node server.`
+      );
+    }
+    const data = (await res.json()) as Partial<AuthStatus> & { error?: string };
+    if (!res.ok || typeof data.authenticated !== "boolean") {
+      throw new Error(data.error || `Server responded with HTTP ${res.status}.`);
+    }
+    return { url, status: data as AuthStatus };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Timed out after 7s connecting to ${url}.`);
+    }
+    if (err instanceof TypeError) {
+      throw new Error(
+        `Could not connect to ${url} (network, CORS, or HTTPS->HTTP mixed-content block). Ensure the AutoPost Node server is running and accessible.`
+      );
+    }
+    throw err instanceof Error ? err : new Error("Failed to verify AutoPost backend.");
+  } finally {
+    clearTimeout(timer);
   }
 }
 
