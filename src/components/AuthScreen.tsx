@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { AlertCircle, Eye, EyeOff, KeyRound, Lock, ShieldCheck, UserPlus } from "lucide-react";
-import { api } from "../api";
+import { AlertCircle, Eye, EyeOff, KeyRound, Lock, Server, ShieldCheck, UserPlus } from "lucide-react";
+import { api, clearApiBaseUrl, getApiBaseUrl, setApiBaseUrl } from "../api";
 import type { AuthStatus, AuthUser } from "../types";
 
 interface AuthScreenProps {
   status: AuthStatus;
   onAuthenticated: (user: AuthUser) => void;
+  onServerChanged?: () => void;
 }
 
-export function AuthScreen({ status, onAuthenticated }: AuthScreenProps) {
+export function AuthScreen({ status, onAuthenticated, onServerChanged }: AuthScreenProps) {
   const initialMode: "login" | "signup" = !status.hasUsers ? "signup" : "login";
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [name, setName] = useState("");
@@ -18,6 +19,8 @@ export function AuthScreen({ status, onAuthenticated }: AuthScreenProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [showServerConfig, setShowServerConfig] = useState(false);
+  const [serverInput, setServerInput] = useState(() => getApiBaseUrl());
 
   const signupDisabled = status.hasUsers && !status.allowSignups;
 
@@ -79,12 +82,71 @@ export function AuthScreen({ status, onAuthenticated }: AuthScreenProps) {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-      <header className="h-16 bg-white border-b border-slate-200 px-6 lg:px-10 flex items-center justify-between">
+      <header className="h-16 bg-white border-b border-slate-200 px-6 lg:px-10 flex items-center justify-between gap-4">
         <span className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0">
           AutoPost
         </span>
-        <span className="text-xs font-medium text-slate-500">Protected Workspace</span>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setServerInput(getApiBaseUrl());
+              setShowServerConfig((v) => !v);
+            }}
+            className="inline-flex items-center gap-1.5 h-8 px-2.5 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
+          >
+            <Server className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate max-w-[180px]">
+              {getApiBaseUrl() ? getApiBaseUrl().replace(/^https?:\/\//i, "") : "API: Same-Origin"}
+            </span>
+          </button>
+          <span className="hidden sm:inline text-xs font-medium text-slate-500">Protected Workspace</span>
+        </div>
       </header>
+
+      {showServerConfig && (
+        <div className="bg-white border-b border-slate-200 px-6 lg:px-10 py-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setApiBaseUrl(serverInput);
+              setShowServerConfig(false);
+              onServerChanged?.();
+            }}
+            className="max-w-5xl mx-auto flex flex-wrap items-center gap-2.5"
+          >
+            <label htmlFor="auth-api-url" className="text-xs font-medium text-slate-700 whitespace-nowrap">
+              Backend API URL
+            </label>
+            <input
+              id="auth-api-url"
+              type="url"
+              value={serverInput}
+              onChange={(e) => setServerInput(e.target.value)}
+              placeholder="https://your-autopost-server.run.app (leave blank for same-origin)"
+              className="flex-1 min-w-[240px] h-9 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              type="submit"
+              className="h-9 px-3.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer"
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                clearApiBaseUrl();
+                setServerInput("");
+                setShowServerConfig(false);
+                onServerChanged?.();
+              }}
+              className="h-9 px-3 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+            >
+              Use Same-Origin
+            </button>
+          </form>
+        </div>
+      )}
 
       <main className="flex-1 flex items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">

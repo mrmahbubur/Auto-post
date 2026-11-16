@@ -13,7 +13,7 @@ import {
   Sliders,
   X,
 } from "lucide-react";
-import { api, getApiBaseUrl, setApiBaseUrl, setUnauthorizedHandler } from "./api";
+import { api, clearApiBaseUrl, getApiBaseUrl, setApiBaseUrl, setUnauthorizedHandler } from "./api";
 import { AccountView } from "./components/AccountView";
 import { AuthScreen } from "./components/AuthScreen";
 import { LedgerView } from "./components/LedgerView";
@@ -192,15 +192,32 @@ export default function App() {
     if (loadError && !authStatus) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-          <div className="bg-white border border-red-200 rounded-xl p-8 flex flex-col items-center text-center gap-3 max-w-md">
+          <div className="bg-white border border-red-200 rounded-xl p-8 flex flex-col items-center text-center gap-3 max-w-md w-full">
             <AlertCircle className="w-6 h-6 text-red-600" />
             <div className="text-sm font-medium text-slate-900">{loadError}</div>
-            <button
-              onClick={checkAuthAndLoad}
-              className="h-9 px-4 text-xs font-medium text-white bg-slate-900 rounded-lg cursor-pointer"
-            >
-              Retry
-            </button>
+            {getApiBaseUrl() && (
+              <div className="text-xs text-slate-500 font-mono break-all">
+                Target: {getApiBaseUrl()}
+              </div>
+            )}
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+              <button
+                onClick={checkAuthAndLoad}
+                className="h-9 px-4 text-xs font-medium text-white bg-slate-900 rounded-lg cursor-pointer"
+              >
+                Retry
+              </button>
+              <button
+                onClick={() => {
+                  clearApiBaseUrl();
+                  setBackendUrlInput("");
+                  checkAuthAndLoad();
+                }}
+                className="h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Reset Same-Origin
+              </button>
+            </div>
           </div>
         </div>
       );
@@ -217,6 +234,7 @@ export default function App() {
           }
         }
         onAuthenticated={handleAuthenticated}
+        onServerChanged={checkAuthAndLoad}
       />
     );
   }
@@ -425,6 +443,7 @@ export default function App() {
                   state={state}
                   onStateChange={setState}
                   onSignedOut={handleSignOut}
+                  onServerChanged={checkAuthAndLoad}
                 />
               )}
             </>

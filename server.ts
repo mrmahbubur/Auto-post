@@ -221,6 +221,10 @@ async function startServer() {
         res.setHeader("Access-Control-Allow-Credentials", "true");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        res.setHeader("Access-Control-Max-Age", "86400");
+        if (req.headers["access-control-request-private-network"] === "true") {
+          res.setHeader("Access-Control-Allow-Private-Network", "true");
+        }
       }
       if (req.method === "OPTIONS") {
         res.status(204).end();

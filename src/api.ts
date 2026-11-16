@@ -26,6 +26,14 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
 
 export function getApiBaseUrl(): string {
   try {
+    if (typeof window !== "undefined" && window.location?.search) {
+      const paramApi = new URLSearchParams(window.location.search).get("api");
+      if (paramApi && /^https?:\/\//i.test(paramApi.trim())) {
+        const clean = paramApi.trim().replace(/\/+$/, "");
+        localStorage.setItem(API_BASE_STORAGE_KEY, clean);
+        return clean;
+      }
+    }
     const saved = localStorage.getItem(API_BASE_STORAGE_KEY);
     if (saved && /^https?:\/\//i.test(saved.trim())) {
       return saved.trim().replace(/\/+$/, "");
@@ -48,6 +56,10 @@ export function setApiBaseUrl(url: string): void {
   } catch {
     // Ignore storage access errors
   }
+}
+
+export function clearApiBaseUrl(): void {
+  setApiBaseUrl("");
 }
 
 export function apiUrl(path: string): string {

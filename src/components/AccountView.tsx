@@ -1,15 +1,16 @@
 import { useState } from "react";
 import { AlertCircle, CheckCircle2, KeyRound, Loader2, LogOut, Shield, ShieldAlert } from "lucide-react";
-import { api } from "../api";
+import { api, clearApiBaseUrl, getApiBaseUrl, setApiBaseUrl } from "../api";
 import type { BootstrapState } from "../types";
 
 interface AccountViewProps {
   state: BootstrapState;
   onStateChange: (next: BootstrapState) => void;
   onSignedOut: () => void;
+  onServerChanged?: () => void;
 }
 
-export function AccountView({ state, onStateChange, onSignedOut }: AccountViewProps) {
+export function AccountView({ state, onStateChange, onSignedOut, onServerChanged }: AccountViewProps) {
   const { user, security } = state;
 
   const [currentPassword, setCurrentPassword] = useState("");
@@ -23,6 +24,8 @@ export function AccountView({ state, onStateChange, onSignedOut }: AccountViewPr
   const [sessionNotice, setSessionNotice] = useState("");
   const [activeSessions, setActiveSessions] = useState(security.activeSessionsCount);
   const [updatingLock, setUpdatingLock] = useState(false);
+  const [editingEndpoint, setEditingEndpoint] = useState(false);
+  const [endpointInput, setEndpointInput] = useState(() => getApiBaseUrl());
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -152,7 +155,63 @@ export function AccountView({ state, onStateChange, onSignedOut }: AccountViewPr
               <dt className="text-slate-500 text-xs">Account Created (UTC)</dt>
               <dd className="font-mono tabular-nums text-xs text-slate-600">{createdStr}</dd>
             </div>
+            <div className="py-2.5 flex items-center justify-between gap-4">
+              <dt className="text-slate-500 text-xs">Backend API Endpoint</dt>
+              <dd className="flex items-center gap-2 text-xs">
+                <span className="font-mono text-slate-700 truncate max-w-[200px]">
+                  {getApiBaseUrl() || "Same-origin (/api)"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEndpointInput(getApiBaseUrl());
+                    setEditingEndpoint((v) => !v);
+                  }}
+                  className="text-blue-600 hover:text-blue-800 font-medium cursor-pointer shrink-0"
+                >
+                  {editingEndpoint ? "Cancel" : "Change"}
+                </button>
+              </dd>
+            </div>
           </dl>
+
+          {editingEndpoint && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                setApiBaseUrl(endpointInput);
+                setEditingEndpoint(false);
+                onServerChanged?.();
+              }}
+              className="flex flex-wrap items-center gap-2 pt-1"
+            >
+              <input
+                type="url"
+                value={endpointInput}
+                onChange={(e) => setEndpointInput(e.target.value)}
+                placeholder="https://your-autopost-server.run.app"
+                className="flex-1 min-w-[200px] h-9 px-3 text-xs font-mono bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="submit"
+                className="h-9 px-3 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer"
+              >
+                Save &amp; Reconnect
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearApiBaseUrl();
+                  setEndpointInput("");
+                  setEditingEndpoint(false);
+                  onServerChanged?.();
+                }}
+                className="h-9 px-3 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Same-Origin
+              </button>
+            </form>
+          )}
 
           {sessionNotice && (
             <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-2 rounded-lg">
