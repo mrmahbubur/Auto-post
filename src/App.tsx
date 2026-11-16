@@ -13,7 +13,7 @@ import {
   Sliders,
   X,
 } from "lucide-react";
-import { api, setUnauthorizedHandler } from "./api";
+import { api, getApiBaseUrl, setApiBaseUrl, setUnauthorizedHandler } from "./api";
 import { AccountView } from "./components/AccountView";
 import { AuthScreen } from "./components/AuthScreen";
 import { LedgerView } from "./components/LedgerView";
@@ -41,6 +41,8 @@ export default function App() {
   const [state, setState] = useState<BootstrapState | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [backendMissing, setBackendMissing] = useState(false);
+  const [backendUrlInput, setBackendUrlInput] = useState(() => getApiBaseUrl());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [quickRunning, setQuickRunning] = useState(false);
   const [preselectedArticle, setPreselectedArticle] = useState<{
@@ -51,6 +53,7 @@ export default function App() {
   const checkAuthAndLoad = useCallback(async () => {
     setAuthLoading(true);
     setLoadError("");
+    setBackendMissing(false);
     try {
       const status = await api.getAuthStatus();
       setAuthStatus(status);
@@ -62,7 +65,12 @@ export default function App() {
         setState(null);
       }
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : "Failed to connect to AutoPost server");
+      const msg = err instanceof Error ? err.message : "Failed to connect to AutoPost server";
+      if (msg === "BACKEND_UNAVAILABLE") {
+        setBackendMissing(true);
+      } else {
+        setLoadError(msg);
+      }
     } finally {
       setAuthLoading(false);
       setLoading(false);
@@ -118,6 +126,63 @@ export default function App() {
         <div className="bg-white border border-slate-200 rounded-xl px-6 py-5 flex items-center gap-3 text-sm text-slate-600">
           <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
           <span>Verifying session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (backendMissing) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 max-w-lg w-full space-y-5">
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-bold text-slate-900">Connect AutoPost Backend Server</h1>
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+              This static frontend is running without a local <code className="font-mono">/api</code> server (for example on GitHub Pages). Enter the URL of your running AutoPost Node server (`npm start` on port 3000 or Cloud Run) to sign in and run your Gravatar daily scheduler.
+            </p>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setApiBaseUrl(backendUrlInput);
+              checkAuthAndLoad();
+            }}
+            className="space-y-3"
+          >
+            <div>
+              <label htmlFor="api-base-input" className="block text-xs font-medium text-slate-700 mb-1">
+                Backend Server URL
+              </label>
+              <input
+                id="api-base-input"
+                type="url"
+                required
+                value={backendUrlInput}
+                onChange={(e) => setBackendUrlInput(e.target.value)}
+                placeholder="https://your-autopost-server.run.app"
+                className="w-full h-10 px-3.5 text-sm bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="submit"
+                className="h-9 px-4 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer"
+              >
+                Connect Server
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setApiBaseUrl("");
+                  setBackendUrlInput("");
+                  checkAuthAndLoad();
+                }}
+                className="h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Retry Same-Origin
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     );

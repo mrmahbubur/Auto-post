@@ -16,11 +16,43 @@ import type {
 } from "./types";
 
 const TOKEN_STORAGE_KEY = "autopost_session_token";
+const API_BASE_STORAGE_KEY = "autopost_api_base";
 
 let unauthorizedHandler: (() => void) | null = null;
 
 export function setUnauthorizedHandler(fn: (() => void) | null): void {
   unauthorizedHandler = fn;
+}
+
+export function getApiBaseUrl(): string {
+  try {
+    const saved = localStorage.getItem(API_BASE_STORAGE_KEY);
+    if (saved && /^https?:\/\//i.test(saved.trim())) {
+      return saved.trim().replace(/\/+$/, "");
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  const envBase = (import.meta.env?.VITE_API_BASE_URL as string | undefined) || "";
+  return envBase ? envBase.trim().replace(/\/+$/, "") : "";
+}
+
+export function setApiBaseUrl(url: string): void {
+  try {
+    const clean = url.trim().replace(/\/+$/, "");
+    if (clean && /^https?:\/\//i.test(clean)) {
+      localStorage.setItem(API_BASE_STORAGE_KEY, clean);
+    } else {
+      localStorage.removeItem(API_BASE_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+}
+
+export function apiUrl(path: string): string {
+  const base = getApiBaseUrl();
+  return base ? `${base}${path}` : path;
 }
 
 export function getStoredToken(): string {
@@ -56,14 +88,21 @@ function buildAuthHeaders(extra?: HeadersInit): Record<string, string> {
 }
 
 async function request<T>(url: string, init?: RequestInit, skipAuthRedirect = false): Promise<T> {
-  const res = await fetch(url, {
-    credentials: "include",
+  const target = apiUrl(url);
+  const res = await fetch(target, {
+    credentials: getApiBaseUrl() ? "omit" : "include",
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...buildAuthHeaders(init?.headers),
     },
   });
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    if (res.status === 404 || res.status === 405 || contentType.includes("text/html")) {
+      throw new Error("BACKEND_UNAVAILABLE");
+    }
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !skipAuthRedirect) {
     setStoredToken("");
@@ -288,8 +327,8 @@ export const api = {
     }),
 
   exportYaml: async () => {
-    const res = await fetch("/api/config.yaml", {
-      credentials: "include",
+    const res = await fetch(apiUrl("/api/config.yaml"), {
+      credentials: getApiBaseUrl() ? "omit" : "include",
       headers: buildAuthHeaders(),
     });
     if (res.status === 401) {
@@ -308,8 +347,8 @@ export const api = {
     }),
 
   fetchImageBlob: async (filename: string): Promise<Blob> => {
-    const res = await fetch(`/api/images/${encodeURIComponent(filename)}`, {
-      credentials: "include",
+    const res = await fetch(apiUrl(`/api/images/${encodeURIComponent(filename)}`), {
+      credentials: getApiBaseUrl() ? "omit" : "include",
       headers: buildAuthHeaders(),
     });
     if (res.status === 401) {
@@ -323,8 +362,8 @@ export const api = {
   },
 
   fetchReportHtml: async (runId: string): Promise<string> => {
-    const res = await fetch(`/api/runs/${encodeURIComponent(runId)}/report.html`, {
-      credentials: "include",
+    const res = await fetch(apiUrl(`/api/runs/${encodeURIComponent(runId)}/report.html`), {
+      credentials: getApiBaseUrl() ? "omit" : "include",
       headers: buildAuthHeaders(),
     });
     if (res.status === 401) {

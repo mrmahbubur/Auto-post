@@ -208,12 +208,24 @@ async function startServer() {
   app.set("trust proxy", true);
   app.use(express.json({ limit: "4mb" }));
 
-  // Baseline security headers (avoid X-Frame-Options DENY so AI Studio preview iframe works)
+  // Baseline security headers + CORS support for Bearer-authenticated external frontends (avoid X-Frame-Options DENY for preview iframe)
   app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     if (req.path.startsWith("/api/")) {
       res.setHeader("Cache-Control", "no-store");
+      const origin = req.headers.origin;
+      if (origin && /^https?:\/\//i.test(origin)) {
+        res.setHeader("Access-Control-Allow-Origin", origin);
+        res.setHeader("Vary", "Origin");
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      }
+      if (req.method === "OPTIONS") {
+        res.status(204).end();
+        return;
+      }
     }
     next();
   });
