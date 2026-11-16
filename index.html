@@ -18,7 +18,6 @@
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased selection:bg-blue-100 selection:text-blue-900">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx" onerror="window.__loadStaticApp && window.__loadStaticApp()"></script>
     <!-- gh-root-fallback:start -->
     <script>
       (function () {
@@ -35,11 +34,16 @@
           script.src = './static-app/app.js';
           document.body.appendChild(script);
         };
-        setTimeout(function () {
-          if (!window.__AUTOPOST_MOUNTED__) window.__loadStaticApp();
-        }, 1200);
+        if (/\.github\.io$/i.test(window.location.hostname) || window.location.protocol === 'file:') {
+          window.__loadStaticApp();
+        } else {
+          setTimeout(function () {
+            if (!window.__AUTOPOST_MOUNTED__) window.__loadStaticApp();
+          }, 400);
+        }
       })();
     </script>
     <!-- gh-root-fallback:end -->
+    <script type="module" src="/src/main.tsx" onerror="window.__loadStaticApp && window.__loadStaticApp()"></script>
   </body>
 </html>

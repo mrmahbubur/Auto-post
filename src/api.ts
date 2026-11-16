@@ -161,17 +161,25 @@ function buildAuthHeaders(extra?: HeadersInit): Record<string, string> {
 
 async function request<T>(url: string, init?: RequestInit, skipAuthRedirect = false): Promise<T> {
   const target = apiUrl(url);
-  const res = await fetch(target, {
-    credentials: getApiBaseUrl() ? "omit" : "include",
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...buildAuthHeaders(init?.headers),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(target, {
+      credentials: getApiBaseUrl() ? "omit" : "include",
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...buildAuthHeaders(init?.headers),
+      },
+    });
+  } catch {
+    if (!getApiBaseUrl()) {
+      throw new Error("BACKEND_UNAVAILABLE");
+    }
+    throw new Error(`Unable to reach backend server at ${getApiBaseUrl()}. Verify the server is running and CORS is enabled.`);
+  }
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
-    if (res.status === 404 || res.status === 405 || contentType.includes("text/html")) {
+    if (res.status === 404 || res.status === 405 || contentType.includes("text/html") || !getApiBaseUrl()) {
       throw new Error("BACKEND_UNAVAILABLE");
     }
   }

@@ -138,7 +138,7 @@ export default function App() {
           <div className="space-y-1.5">
             <h1 className="text-lg font-bold text-slate-900">Connect AutoPost Backend Server</h1>
             <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-              This static frontend is running without a local <code className="font-mono">/api</code> server (for example on GitHub Pages). Enter the URL of your running AutoPost Node server (`npm start` on port 3000 or Cloud Run) to sign in and run your Gravatar daily scheduler.
+              This static frontend is running without a local <code className="font-mono">/api</code> server (such as GitHub Pages). Enter the URL of your running AutoPost Node server (for example Cloud Run or <code className="font-mono">http://localhost:3000</code>), or open this page with <code className="font-mono">?api=https://your-server</code>.
             </p>
           </div>
           <form
@@ -192,32 +192,67 @@ export default function App() {
     if (loadError && !authStatus) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-          <div className="bg-white border border-red-200 rounded-xl p-8 flex flex-col items-center text-center gap-3 max-w-md w-full">
-            <AlertCircle className="w-6 h-6 text-red-600" />
-            <div className="text-sm font-medium text-slate-900">{loadError}</div>
-            {getApiBaseUrl() && (
-              <div className="text-xs text-slate-500 font-mono break-all">
-                Target: {getApiBaseUrl()}
+          <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8 max-w-lg w-full space-y-5">
+            <div className="flex items-start gap-2.5 bg-red-50 border border-red-200 text-red-800 px-3.5 py-2.5 rounded-lg text-xs">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-600" />
+              <div className="space-y-1">
+                <div className="font-medium">{loadError}</div>
+                {getApiBaseUrl() && (
+                  <div className="font-mono text-[11px] text-red-700 break-all">
+                    Target: {getApiBaseUrl()}
+                  </div>
+                )}
               </div>
-            )}
-            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-              <button
-                onClick={checkAuthAndLoad}
-                className="h-9 px-4 text-xs font-medium text-white bg-slate-900 rounded-lg cursor-pointer"
-              >
-                Retry
-              </button>
-              <button
-                onClick={() => {
-                  clearApiBaseUrl();
-                  setBackendUrlInput("");
-                  checkAuthAndLoad();
-                }}
-                className="h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
-              >
-                Reset Same-Origin
-              </button>
             </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                setApiBaseUrl(backendUrlInput);
+                checkAuthAndLoad();
+              }}
+              className="space-y-3"
+            >
+              <div>
+                <label htmlFor="err-api-base-input" className="block text-xs font-medium text-slate-700 mb-1">
+                  Backend Server URL
+                </label>
+                <input
+                  id="err-api-base-input"
+                  type="url"
+                  value={backendUrlInput}
+                  onChange={(e) => setBackendUrlInput(e.target.value)}
+                  placeholder="https://your-autopost-server.run.app"
+                  className="w-full h-10 px-3.5 text-sm bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="submit"
+                  className="h-9 px-4 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer"
+                >
+                  Connect Server
+                </button>
+                <button
+                  type="button"
+                  onClick={checkAuthAndLoad}
+                  className="h-9 px-3.5 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearApiBaseUrl();
+                    setBackendUrlInput("");
+                    checkAuthAndLoad();
+                  }}
+                  className="h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+                >
+                  Reset Same-Origin
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       );
