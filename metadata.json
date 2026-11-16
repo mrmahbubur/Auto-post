@@ -1,0 +1,8 @@
+{
+  "name": "AutoPost",
+  "description": "Multi-platform content syndication engine that discovers articles from RSS/Atom feeds and sitemaps, writes platform-native copy with Gemini, renders 1200x630 thumbnails, and publishes across 11 social APIs with an SQLite ledger.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
