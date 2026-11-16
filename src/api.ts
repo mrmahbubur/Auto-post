@@ -116,7 +116,8 @@ export function clearApiBaseUrl(): void {
 
 export function apiUrl(path: string): string {
   const base = getApiBaseUrl();
-  return base ? `${base}${path}` : path;
+  const cleanPath = path.startsWith("/") ? path : `/${path}`;
+  return base ? `${base}${cleanPath}` : cleanPath;
 }
 
 export function getStoredToken(): string {
