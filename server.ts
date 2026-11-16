@@ -214,6 +214,7 @@ async function startServer() {
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     if (req.path.startsWith("/api/")) {
       res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
       const origin = req.headers.origin;
       if (origin && /^https?:\/\//i.test(origin)) {
         res.setHeader("Access-Control-Allow-Origin", origin);
@@ -225,7 +226,6 @@ async function startServer() {
         );
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
         res.setHeader("Access-Control-Max-Age", "86400");
-        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
         if (String(req.headers["access-control-request-private-network"] || "").toLowerCase() === "true") {
           res.setHeader("Access-Control-Allow-Private-Network", "true");
         }

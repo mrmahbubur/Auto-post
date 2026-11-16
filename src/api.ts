@@ -114,9 +114,16 @@ export function clearApiBaseUrl(): void {
   setApiBaseUrl("");
 }
 
+export function normalizeApiPath(path: string): string {
+  const trimmed = path.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `/${trimmed.replace(/^\/+/, "")}`;
+}
+
 export function apiUrl(path: string): string {
+  const cleanPath = normalizeApiPath(path);
+  if (/^https?:\/\//i.test(cleanPath)) return cleanPath;
   const base = getApiBaseUrl();
-  const cleanPath = path.startsWith("/") ? path : `/${path}`;
   return base ? `${base}${cleanPath}` : cleanPath;
 }
 
