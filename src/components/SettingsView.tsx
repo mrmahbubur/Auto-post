@@ -330,8 +330,8 @@ export function SettingsView({ state, onStateChange }: SettingsViewProps) {
                 onChange={(e) => setAiCfg({ ...aiCfg, model: e.target.value })}
                 className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="gemini-4-hydrogen">gemini-4-hydrogen (balanced default)</option>
-                <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (fastest, lowest cost)</option>
+                <option value="gemini-3.1-flash-lite">gemini-3.1-flash-lite (recommended default, fast)</option>
+                <option value="gemini-4-hydrogen">gemini-4-hydrogen (reasoning, stricter quota)</option>
               </select>
             </div>
 

@@ -50,7 +50,7 @@ import {
   upsertSite,
 } from "./server/db.ts";
 import { fetchGravatarProfile, gravatarToArticleAndSite } from "./server/gravatar.ts";
-import { verifyMediaSignature } from "./server/mediaHost.ts";
+import { setDetectedAppUrl, verifyMediaSignature } from "./server/mediaHost.ts";
 import {
   exportConfigYaml,
   importConfigYaml,
@@ -155,7 +155,7 @@ function buildBootstrapPayload(user: PublicUser) {
     "ai",
     {
       enabled: true,
-      model: "gemini-4-hydrogen",
+      model: "gemini-3.1-flash-lite",
       brand_voice: "",
     },
     userId
@@ -210,6 +210,11 @@ async function startServer() {
 
   // Baseline security headers + CORS support for Bearer-authenticated external frontends (avoid X-Frame-Options DENY for preview iframe)
   app.use((req, res, next) => {
+    const host = req.get("x-forwarded-host") || req.get("host");
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    if (host && proto && /^https?$/i.test(proto)) {
+      setDetectedAppUrl(`${proto.split(",")[0].trim()}://${host.split(",")[0].trim()}`);
+    }
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     if (req.path.startsWith("/api/")) {

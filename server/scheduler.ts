@@ -348,12 +348,18 @@ export async function executeAutoPostCycle(
       : null;
 
     const hasErrorsOnly = run.counts.error > 0 && run.counts.ok === 0 && run.counts.dry === 0;
+    const emptyNote =
+      !hasErrorsOnly && run.items.length === 0
+        ? "No new unposted articles found within your lookback window."
+        : "";
     const updated: ScheduleSettings = {
       ...initialSchedule,
       last_run_at: nowSec,
       next_run_at: nextRunAt,
       last_status: hasErrorsOnly ? "error" : "ok",
-      last_error: hasErrorsOnly ? "All platform post attempts failed; check Ledger & Reports for details." : "",
+      last_error: hasErrorsOnly
+        ? "All platform post attempts failed; check Ledger & Reports for details."
+        : emptyNote,
       last_run_id: run.id,
     };
     setSetting("schedule", updated, userId);

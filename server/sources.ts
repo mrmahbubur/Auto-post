@@ -184,7 +184,7 @@ export async function enrichFromPage(art: Article): Promise<Article> {
       for (const pat of patterns) {
         const m = html.match(pat);
         if (m?.[1]) {
-          image = m[1];
+          image = decodeHtmlEntities(m[1]).trim();
           break;
         }
       }

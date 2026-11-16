@@ -62,7 +62,7 @@ export async function runPipeline(options: RunOptions): Promise<RunRecord> {
     "ai",
     {
       enabled: true,
-      model: "gemini-4-hydrogen",
+      model: "gemini-3.1-flash-lite",
       brand_voice: "",
     },
     userId
@@ -377,7 +377,7 @@ export async function publishPreparedArticle(params: {
   }
 
   markSeen(article.key, article.title, article.url, site.name, userId);
-  const aiSettings = getSetting<AiSettings>("ai", { enabled: true, model: "gemini-4-hydrogen", brand_voice: "" }, userId);
+  const aiSettings = getSetting<AiSettings>("ai", { enabled: true, model: "gemini-3.1-flash-lite", brand_voice: "" }, userId);
 
   const runRecord: RunRecord = {
     id: crypto.randomUUID().slice(0, 12),

@@ -19,6 +19,15 @@ export function verifyMediaSignature(userId: string, filename: string, sig: stri
   return crypto.timingSafeEqual(Buffer.from(expected, "utf8"), Buffer.from(sig, "utf8"));
 }
 
+let detectedAppUrl = "";
+
+export function setDetectedAppUrl(url: string): void {
+  const clean = url.trim().replace(/\/+$/, "");
+  if (/^https?:\/\//i.test(clean) && !clean.includes("MY_APP_URL")) {
+    detectedAppUrl = clean;
+  }
+}
+
 export async function uploadPublicMedia(
   imagePath: string,
   cfg: MediaHostSettings,
@@ -31,8 +40,12 @@ export async function uploadPublicMedia(
   const filename = path.basename(imagePath);
 
   if (cfg.provider === "app_url") {
-    const appUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
-    if (!appUrl || !/^https?:\/\//i.test(appUrl) || !userId || appUrl.includes("MY_APP_URL")) {
+    const envUrl = (process.env.APP_URL || "").trim().replace(/\/+$/, "");
+    const appUrl =
+      envUrl && /^https?:\/\//i.test(envUrl) && !envUrl.includes("MY_APP_URL")
+        ? envUrl
+        : detectedAppUrl;
+    if (!appUrl || !/^https?:\/\//i.test(appUrl) || !userId) {
       return "";
     }
     const sig = signMediaFilename(userId, filename);

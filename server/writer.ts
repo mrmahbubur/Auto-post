@@ -6,8 +6,8 @@ const VALID_MODELS = new Set(["gemini-4-hydrogen", "gemini-3.1-flash-lite"]);
 
 function resolveModel(configured?: string): string {
   if (configured && VALID_MODELS.has(configured)) return configured;
-  if (configured && /lite/i.test(configured)) return "gemini-3.1-flash-lite";
-  return "gemini-4-hydrogen";
+  if (configured && /hydrogen|gemini-4/i.test(configured)) return "gemini-4-hydrogen";
+  return "gemini-3.1-flash-lite";
 }
 
 function getAiClient(): GoogleGenAI | null {
@@ -57,7 +57,7 @@ async function generateWithGemini(
   const ai = getAiClient();
   if (!ai) return null;
 
-  const model = resolveModel(aiSettings.model);
+  let model = resolveModel(aiSettings.model);
   const prompt = `SOURCE
 Title: ${article.title}
 URL: ${article.url}
@@ -156,6 +156,11 @@ Generate the complete 14-field JSON social copy deck following every character l
         // Keep rawMsg if not JSON
       }
       lastErrMsg = friendlyMsg;
+      const quotaExhausted = /RESOURCE_EXHAUSTED|QuotaFailure|\b429\b/i.test(rawMsg);
+      if (quotaExhausted && model !== "gemini-3.1-flash-lite" && attempt < maxAttempts) {
+        model = "gemini-3.1-flash-lite";
+        continue;
+      }
       const nonRetryable = /API_KEY_INVALID|PERMISSION_DENIED|RESOURCE_EXHAUSTED|QuotaFailure|\b400\b|\b401\b|\b403\b|\b429\b/i.test(
         rawMsg
       );
