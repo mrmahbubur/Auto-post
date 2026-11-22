@@ -63,16 +63,25 @@ class ViewErrorBoundary extends Component<
             <span>Something went wrong rendering this view</span>
           </div>
           <p className="text-xs text-slate-600 font-mono break-words">{this.state.error.message}</p>
-          <button
-            type="button"
-            onClick={() => {
-              this.setState({ error: null });
-              this.props.onReset?.();
-            }}
-            className="h-9 px-4 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
-          >
-            Try Again
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                this.setState({ error: null });
+                this.props.onReset?.();
+              }}
+              className="h-9 px-4 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+            >
+              Try Again
+            </button>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+            >
+              Reload App
+            </button>
+          </div>
         </div>
       );
     }

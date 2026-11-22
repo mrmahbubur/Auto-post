@@ -814,15 +814,33 @@ export async function verifyPlatformCredentials(
         signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) {
-        const errBody = (await res.text()).slice(0, 160);
-        throw new Error(`Pinterest board verify failed (${res.status}): ${errBody || res.statusText}`);
+        const rawText = (await res.text()).trim();
+        let detail = rawText.slice(0, 180) || res.statusText;
+        try {
+          const parsedErr = JSON.parse(rawText) as { message?: string; code?: number };
+          if (parsedErr?.message) {
+            detail = parsedErr.code ? `[${parsedErr.code}] ${parsedErr.message}` : parsedErr.message;
+          }
+        } catch {
+          // keep plain text detail
+        }
+        throw new Error(`Pinterest board verify failed (${res.status} @ ${apiBase}): ${detail}`);
       }
-      const d = (await res.json()) as { name?: string };
+      const d = (await res.json()) as {
+        id?: string;
+        name?: string;
+        privacy?: string;
+        pin_count?: number;
+      };
+      const metaParts = [
+        d.privacy ? d.privacy.toLowerCase() : "",
+        typeof d.pin_count === "number" ? `${d.pin_count} pins` : "",
+        apiBase !== "https://api.pinterest.com" ? apiBase : "",
+      ].filter(Boolean);
       return {
-        detail:
-          apiBase !== "https://api.pinterest.com"
-            ? `Board "${d.name || boardId}" verified (${apiBase})`
-            : `Board "${d.name || boardId}" verified`,
+        detail: `Board "${d.name || d.id || boardId}" verified${
+          metaParts.length > 0 ? ` (${metaParts.join(" · ")})` : ""
+        }`,
       };
     }
     case "reddit": {

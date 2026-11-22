@@ -205,10 +205,20 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): 
     if (resolved) return resolved;
   }
   if (rawHtmlBody) {
-    const imgTags = rawHtmlBody.match(/<img\b[^>]*>/gi) || [];
+    const htmlSource = /<img\b/i.test(rawHtmlBody) ? rawHtmlBody : decodeHtmlEntities(rawHtmlBody);
+    const imgTags = htmlSource.match(/<img\b[^>]*>/gi) || [];
     for (const tag of imgTags) {
       const attrs = parseHtmlAttributes(tag);
-      const src = attrs.src || attrs["data-src"] || "";
+      if (attrs.width === "1" || attrs.height === "1") continue;
+      const srcsetFirst = attrs.srcset
+        ? attrs.srcset.split(",")[0]?.trim().split(/\s+/)[0] || ""
+        : "";
+      const src =
+        attrs.src ||
+        attrs["data-src"] ||
+        attrs["data-lazy-src"] ||
+        attrs["data-original"] ||
+        srcsetFirst;
       if (src) {
         const resolved = resolveRelativeUrl(baseUrl, src);
         if (resolved) return resolved;
@@ -275,11 +285,14 @@ export function parseFeed(xmlText: string, siteName: string, baseUrl = ""): Arti
   return entries.map((e) => {
     const url = extractLinkFromEntry(e, effectiveBase);
     const title = stripHtml(textVal(e.title)) || "(untitled)";
-    const rawDesc =
-      textVal(e["content:encoded"]) ||
-      textVal(e.content) ||
-      textVal(e.description) ||
-      textVal(e.summary);
+    const rawContentEncoded = textVal(e["content:encoded"]);
+    const rawContent = textVal(e.content);
+    const rawDescription = textVal(e.description);
+    const rawSummary = textVal(e.summary);
+    const rawDesc = rawContentEncoded || rawContent || rawDescription || rawSummary;
+    const rawHtmlCombined = [rawContentEncoded, rawContent, rawDescription, rawSummary]
+      .filter(Boolean)
+      .join("\n");
     const summary = stripHtml(rawDesc, 600);
     const guid = textVal(e.guid) || textVal(e.id) || url;
     const pubRaw = textVal(e.pubDate) || textVal(e.published) || textVal(e.updated) || textVal(e["dc:date"]);
@@ -300,7 +313,7 @@ export function parseFeed(xmlText: string, siteName: string, baseUrl = ""): Arti
       title,
       url,
       summary,
-      image: extractImageFromEntry(e, url || effectiveBase, rawDesc),
+      image: extractImageFromEntry(e, url || effectiveBase, rawHtmlCombined),
       published,
       guid,
       tags: cats,

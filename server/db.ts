@@ -161,6 +161,7 @@ export const PLATFORM_CATALOG: PlatformMeta[] = [
     label: "Reddit",
     copy_key: "reddit",
     required_env: ["REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET", "REDDIT_USERNAME", "REDDIT_PASSWORD"],
+    optional_env: ["REDDIT_USER_AGENT"],
     supports_image: false,
     needs_public_url: false,
     char_limit: 300,
