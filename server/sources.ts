@@ -187,19 +187,22 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
 
 function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): string {
   const mediaGroups = asNodes(entry["media:group"]);
-  const candidates = [
-    ...asNodes(entry["media:content"]),
-    ...asNodes(entry["media:thumbnail"]),
+  const candidates: Array<{ node: XmlNode; isThumbnail: boolean }> = [
+    ...asNodes(entry["media:content"]).map((node) => ({ node, isThumbnail: false })),
+    ...asNodes(entry["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
     ...mediaGroups.flatMap((g) => [
-      ...asNodes(g["media:content"]),
-      ...asNodes(g["media:thumbnail"]),
+      ...asNodes(g["media:content"]).map((node) => ({ node, isThumbnail: false })),
+      ...asNodes(g["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
     ]),
-    ...asNodes(entry["enclosure"]),
+    ...asNodes(entry["enclosure"]).map((node) => ({ node, isThumbnail: false })),
   ];
-  for (const c of candidates) {
+  for (const { node: c, isThumbnail } of candidates) {
     const rawUrl = String(c["@_url"] || "").trim();
     const typ = String(c["@_type"] || c["@_medium"] || "");
-    if (rawUrl && (/image/i.test(typ) || /\.(png|jpe?g|webp|gif)(\?|$)/i.test(rawUrl))) {
+    if (
+      rawUrl &&
+      (isThumbnail || /image/i.test(typ) || /\.(png|jpe?g|webp|avif|gif)(\?|$)/i.test(rawUrl))
+    ) {
       const resolved = resolveRelativeUrl(baseUrl, rawUrl);
       if (resolved) return resolved;
     }
