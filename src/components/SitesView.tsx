@@ -36,18 +36,55 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
   const [syncResultMsg, setSyncResultMsg] = useState("");
 
   const [testingSiteId, setTestingSiteId] = useState<string | null>(null);
-  const [testResults, setTestResults] = useState<{ siteId: string; articles: Article[] } | null>(null);
+  const [testResults, setTestResults] = useState<{ siteId: string; articles: Article[]; lookbackDays: number } | null>(null);
+  const [probingFeed, setProbingFeed] = useState(false);
+  const [probeNotice, setProbeNotice] = useState("");
 
   function startEdit(site: SiteConfig) {
     setEditing({ ...site, handles: { ...site.handles } });
     setHashtagsText((site.hashtags || []).join(", "));
     setErrorMsg("");
+    setProbeNotice("");
   }
 
   function startNew() {
     setEditing({ ...EMPTY_FORM, handles: { bsky: "", x: "", threads: "" } });
     setHashtagsText("webdev, blog");
     setErrorMsg("");
+    setProbeNotice("");
+  }
+
+  async function handleProbeUrl() {
+    const raw = (editing.url || "").trim();
+    if (!raw) {
+      setErrorMsg("Enter a website URL first to auto-detect its RSS feed or sitemap.");
+      return;
+    }
+    setProbingFeed(true);
+    setErrorMsg("");
+    setProbeNotice("");
+    try {
+      const res = await api.probeSite(raw);
+      setEditing((prev) => ({
+        ...prev,
+        url: res.url || prev.url,
+        name: prev.name?.trim() ? prev.name : res.title,
+        feed: res.feed || prev.feed || "",
+        sitemap: res.sitemap || prev.sitemap || "",
+        brand_color: res.brand_color || prev.brand_color || "#1a73e8",
+      }));
+      setProbeNotice(
+        res.discovery === "rss"
+          ? `Detected RSS/Atom feed: ${res.feed}`
+          : res.discovery === "sitemap"
+          ? `Detected XML sitemap: ${res.sitemap}`
+          : "No RSS/sitemap found; will extract metadata directly from the page URL."
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Feed detection failed");
+    } finally {
+      setProbingFeed(false);
+    }
   }
 
   async function handleSyncGravatar(e: React.FormEvent) {
@@ -123,18 +160,31 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
     }
   }
 
-  async function handleTestFeed(siteId: string) {
+  async function handleTestFeed(siteId: string, overrideLookback?: number) {
+    const lookback = overrideLookback ?? state.settings.run.lookback_days;
     setTestingSiteId(siteId);
     setErrorMsg("");
     try {
-      const res = await api.discoverSite(siteId, state.settings.run.lookback_days, 8);
-      setTestResults({ siteId, articles: res.articles });
+      const res = await api.discoverSite(siteId, lookback, 8);
+      setTestResults({ siteId, articles: res.articles, lookbackDays: lookback });
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Feed test failed");
     } finally {
       setTestingSiteId(null);
     }
   }
+
+  async function handleToggleSiteEnabled(site: SiteConfig) {
+    setErrorMsg("");
+    try {
+      const res = await api.saveSite({ ...site, enabled: !site.enabled });
+      onStateChange(res.state);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to toggle website status");
+    }
+  }
+
+  const gravatarOnly = state.schedule.gravatar_only !== false;
 
   return (
     <div className="space-y-6">
@@ -226,13 +276,22 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
             </button>
           </div>
 
+          {gravatarOnly && (
+            <div className="px-5 py-3 bg-blue-50/70 border-b border-blue-100 text-xs text-blue-900">
+              Strict Gravatar-Only mode is active: automatic cycles, batch runs, and post generation only post articles from websites included on your Gravatar profile.
+            </div>
+          )}
+
           <div className="divide-y divide-slate-100">
             {state.sites.length === 0 ? (
               <div className="p-8 text-center text-sm text-slate-500">
-                No websites configured yet. Sync a Gravatar profile above or add a website manually on the right.
+                No websites synced yet. Connect your Gravatar profile above to discover and monitor your linked websites.
               </div>
             ) : (
-              state.sites.map((site) => (
+              state.sites.map((site) => {
+                const isGravatarSite = site.source === "gravatar";
+                const excludedByPolicy = gravatarOnly && !isGravatarSite;
+                return (
                 <div key={site.id} className="p-5 space-y-3">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-3 min-w-0">
@@ -245,21 +304,25 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
                         {site.name.slice(0, 2).toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-semibold text-slate-900 truncate">{site.name}</span>
                           <span className="text-xs text-slate-400">·</span>
-                          <span
-                            className={`text-xs font-medium ${
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSiteEnabled(site)}
+                            className={`text-xs font-medium hover:underline cursor-pointer ${
                               site.enabled ? "text-emerald-700" : "text-slate-400"
                             }`}
                           >
                             {site.enabled ? "Active" : "Paused"}
-                          </span>
-                          {site.source === "gravatar" && (
-                            <>
-                              <span className="text-xs text-slate-400">·</span>
-                              <span className="text-xs text-blue-700 font-medium">Gravatar Sync</span>
-                            </>
+                          </button>
+                          <span className="text-xs text-slate-400">·</span>
+                          {isGravatarSite ? (
+                            <span className="text-xs text-blue-700 font-medium">Gravatar Included</span>
+                          ) : (
+                            <span className="text-xs text-amber-700 font-medium">
+                              {excludedByPolicy ? "Manual (Excluded while Gravatar-Only)" : "Manual Source"}
+                            </span>
                           )}
                         </div>
                         <div className="text-xs text-slate-500 truncate font-mono">
@@ -333,8 +396,21 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
                         Feed check returned {testResults.articles.length} articles:
                       </div>
                       {testResults.articles.length === 0 ? (
-                        <div className="text-xs text-slate-500">
-                          0 articles matched the {state.settings.run.lookback_days}-day lookback window.
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                          <span>
+                            0 articles matched the {testResults.lookbackDays}-day lookback window.
+                          </span>
+                          {testResults.lookbackDays < 365 && (
+                            <button
+                              type="button"
+                              onClick={() => handleTestFeed(site.id, 365)}
+                              disabled={testingSiteId === site.id}
+                              className="inline-flex items-center gap-1 text-blue-600 hover:underline font-medium cursor-pointer"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>Retry with 365d lookback</span>
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg bg-slate-50/50">
@@ -369,7 +445,8 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
                     </div>
                   )}
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -408,14 +485,29 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
 
           <div>
             <label className="block text-xs font-medium text-slate-700 mb-1">Canonical Website URL</label>
-            <input
-              type="url"
-              required
-              value={editing.url || ""}
-              onChange={(e) => setEditing({ ...editing, url: e.target.value })}
-              placeholder="https://yourdomain.com"
-              className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                inputMode="url"
+                required
+                value={editing.url || ""}
+                onChange={(e) => setEditing({ ...editing, url: e.target.value })}
+                placeholder="https://yourdomain.com"
+                className="flex-1 min-w-0 h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                type="button"
+                onClick={handleProbeUrl}
+                disabled={probingFeed || !(editing.url || "").trim()}
+                className="inline-flex items-center gap-1.5 h-9 px-3 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {probingFeed ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}
+                <span>Detect Feed</span>
+              </button>
+            </div>
+            {probeNotice && (
+              <p className="mt-1.5 text-[11px] text-emerald-700 font-medium break-all">{probeNotice}</p>
+            )}
           </div>
 
           <div>
@@ -423,7 +515,8 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
               RSS / Atom Feed URL
             </label>
             <input
-              type="url"
+              type="text"
+              inputMode="url"
               value={editing.feed || ""}
               onChange={(e) => setEditing({ ...editing, feed: e.target.value })}
               placeholder="https://yourdomain.com/feed.xml"
@@ -436,7 +529,8 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
               Sitemap URL (optional fallback if no RSS/Atom feed)
             </label>
             <input
-              type="url"
+              type="text"
+              inputMode="url"
               value={editing.sitemap || ""}
               onChange={(e) => setEditing({ ...editing, sitemap: e.target.value })}
               placeholder="https://yourdomain.com/sitemap.xml"

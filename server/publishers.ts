@@ -13,6 +13,7 @@ export interface PublishResult {
 export function textForPlatform(copyKey: string, copy: CopyDeck, article: Article): string {
   if (copyKey === "reddit") return copy.reddit_title || article.title;
   if (copyKey === "devto") return copy.devto_title || article.title;
+  if (copyKey === "pinterest") return copy.pinterest || copy.facebook_page || article.title;
   const val = (copy as unknown as Record<string, unknown>)[copyKey];
   if (typeof val === "string" && val.trim()) return val;
   return copy.facebook_page || article.title;
@@ -663,6 +664,177 @@ export async function publishToPlatform(
       return publishThreads(text, imageUrl, site, cfg, userId);
     case "pinterest":
       return publishPinterest(text, imageUrl, article, cfg, userId);
+    default:
+      throw new Error(`Unsupported platform: ${platformName}`);
+  }
+}
+
+export async function verifyPlatformCredentials(
+  platformName: string,
+  cfg: Record<string, unknown>,
+  userId?: string
+): Promise<{ detail: string }> {
+  switch (platformName) {
+    case "bluesky": {
+      const identifier = getSecret("BSKY_HANDLE", userId);
+      const password = getSecret("BSKY_APP_PASSWORD", userId);
+      if (!identifier || !password) throw new Error("BSKY_HANDLE and BSKY_APP_PASSWORD are required.");
+      const res = await fetch("https://bsky.social/xrpc/com.atproto.server.createSession", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": UA },
+        body: JSON.stringify({ identifier, password }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`Bluesky auth failed (${res.status}): ${(await res.text()).slice(0, 160)}`);
+      const d = (await res.json()) as { handle?: string; did?: string };
+      return { detail: `Authenticated as @${d.handle || identifier}` };
+    }
+    case "mastodon": {
+      const base = String(cfg.instance || "").replace(/\/+$/, "");
+      const token = getSecret("MASTODON_TOKEN", userId);
+      if (!base || !token) throw new Error("Mastodon instance URL and MASTODON_TOKEN are required.");
+      const res = await fetch(`${base}/api/v1/accounts/verify_credentials`, {
+        headers: { Authorization: `Bearer ${token}`, "User-Agent": UA },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`Mastodon verify failed (${res.status})`);
+      const d = (await res.json()) as { acct?: string; username?: string };
+      return { detail: `Connected as @${d.acct || d.username || "account"}` };
+    }
+    case "telegram": {
+      const token = getSecret("TELEGRAM_BOT_TOKEN", userId);
+      const chatId = String(cfg.chat_id || "").trim();
+      if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required.");
+      const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
+        signal: AbortSignal.timeout(15000),
+      });
+      const me = (await meRes.json()) as { ok?: boolean; result?: { username?: string }; description?: string };
+      if (!me.ok) throw new Error(`Telegram getMe failed: ${me.description || meRes.statusText}`);
+      if (!chatId || chatId === "@your_channel") {
+        throw new Error(`Bot @${me.result?.username} valid, but configure a real channel chat_id first.`);
+      }
+      const chatRes = await fetch(
+        `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(chatId)}`,
+        { signal: AbortSignal.timeout(15000) }
+      );
+      const chat = (await chatRes.json()) as { ok?: boolean; result?: { title?: string; username?: string }; description?: string };
+      if (!chat.ok) {
+        throw new Error(`Bot @${me.result?.username} ok, but chat "${chatId}" check failed: ${chat.description || chatRes.statusText}`);
+      }
+      return { detail: `Bot @${me.result?.username} -> ${chat.result?.title || chatId}` };
+    }
+    case "discord": {
+      const webhookUrl = getSecret("DISCORD_WEBHOOK_URL", userId);
+      if (!webhookUrl) throw new Error("DISCORD_WEBHOOK_URL is required.");
+      const res = await fetch(webhookUrl, {
+        headers: { "User-Agent": UA },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`Discord webhook check failed (${res.status})`);
+      const d = (await res.json()) as { name?: string };
+      return { detail: `Webhook "${d.name || "Discord"}" active` };
+    }
+    case "devto": {
+      const key = getSecret("DEVTO_API_KEY", userId);
+      if (!key) throw new Error("DEVTO_API_KEY is required.");
+      const res = await fetch("https://dev.to/api/users/me", {
+        headers: { "api-key": key, "User-Agent": UA },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`Dev.to auth failed (${res.status})`);
+      const d = (await res.json()) as { username?: string; name?: string };
+      return { detail: `Connected as @${d.username || d.name || "devto"}` };
+    }
+    case "facebook_page": {
+      const pageId = String(cfg.page_id || getSecret("FB_PAGE_ID", userId) || "").trim();
+      const token = getSecret("FB_PAGE_TOKEN", userId);
+      if (!pageId || !token) throw new Error("Facebook page_id and FB_PAGE_TOKEN are required.");
+      const res = await fetch(
+        `https://graph.facebook.com/v21.0/${encodeURIComponent(pageId)}?fields=id,name&access_token=${encodeURIComponent(token)}`,
+        { signal: AbortSignal.timeout(15000) }
+      );
+      const d = (await res.json()) as { name?: string; error?: { message?: string } };
+      if (!res.ok || d.error) throw new Error(d.error?.message || `Facebook verify failed (${res.status})`);
+      return { detail: `Page "${d.name || pageId}" verified` };
+    }
+    case "linkedin": {
+      const author = String(cfg.author_urn || "").trim();
+      const token = getSecret("LINKEDIN_TOKEN", userId);
+      if (!author || !token) throw new Error("LinkedIn author_urn and LINKEDIN_TOKEN are required.");
+      const res = await fetch("https://api.linkedin.com/v2/userinfo", {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) {
+        const d = (await res.json()) as { name?: string };
+        return { detail: `Token valid${d.name ? ` (${d.name})` : ""} for ${author}` };
+      }
+      if (res.status === 401) throw new Error("LinkedIn token rejected (401 Unauthorized)");
+      return { detail: `Author ${author} configured (token HTTP ${res.status} on userinfo; w_member_social cannot be read-verified via userinfo)` };
+    }
+    case "threads": {
+      const uid = String(cfg.user_id || "me").trim();
+      const token = getSecret("THREADS_TOKEN", userId);
+      if (!token) throw new Error("THREADS_TOKEN is required.");
+      const res = await fetch(
+        `https://graph.threads.net/v1.0/${encodeURIComponent(uid)}?fields=id,username&access_token=${encodeURIComponent(token)}`,
+        { signal: AbortSignal.timeout(15000) }
+      );
+      const d = (await res.json()) as { username?: string; error?: { message?: string } };
+      if (!res.ok || d.error) throw new Error(d.error?.message || `Threads verify failed (${res.status})`);
+      return { detail: `Connected as @${d.username || uid}` };
+    }
+    case "pinterest": {
+      const boardId = String(cfg.board_id || "").trim();
+      const token = getSecret("PINTEREST_TOKEN", userId);
+      if (!boardId || !token) throw new Error("Pinterest board_id and PINTEREST_TOKEN are required.");
+      const res = await fetch(`https://api.pinterest.com/v5/boards/${encodeURIComponent(boardId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`Pinterest board verify failed (${res.status})`);
+      const d = (await res.json()) as { name?: string };
+      return { detail: `Board "${d.name || boardId}" verified` };
+    }
+    case "reddit": {
+      const clientId = getSecret("REDDIT_CLIENT_ID", userId);
+      const clientSecret = getSecret("REDDIT_CLIENT_SECRET", userId);
+      const username = getSecret("REDDIT_USERNAME", userId);
+      const password = getSecret("REDDIT_PASSWORD", userId);
+      const ua = getSecret("REDDIT_USER_AGENT", userId) || UA;
+      if (!clientId || !clientSecret || !username || !password) {
+        throw new Error("All 4 Reddit credentials are required.");
+      }
+      const basic = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+      const tokRes = await fetch("https://www.reddit.com/api/v1/access_token", {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${basic}`,
+          "User-Agent": ua,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({ grant_type: "password", username, password }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const tok = (await tokRes.json()) as { access_token?: string; error?: string };
+      if (!tokRes.ok || !tok.access_token) {
+        throw new Error(`Reddit token failed: ${tok.error || tokRes.status}`);
+      }
+      return { detail: `OAuth token issued for u/${username}` };
+    }
+    case "x": {
+      const url = "https://api.twitter.com/2/users/me";
+      const res = await fetch(url, {
+        headers: {
+          Authorization: buildOAuth1Header("GET", url, {}, userId),
+          "User-Agent": UA,
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) throw new Error(`X verify failed (${res.status}): ${(await res.text()).slice(0, 140)}`);
+      const d = (await res.json()) as { data?: { username?: string } };
+      return { detail: `Connected as @${d.data?.username || "user"}` };
+    }
     default:
       throw new Error(`Unsupported platform: ${platformName}`);
   }

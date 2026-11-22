@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, CalendarClock, CheckCircle2, Download, Loader2, Play, Trash2, Upload } from "lucide-react";
 import { api } from "../api";
 import type {
@@ -32,6 +32,10 @@ export function SettingsView({ state, onStateChange }: SettingsViewProps) {
   const [yamlBusy, setYamlBusy] = useState(false);
   const [yamlSuccess, setYamlSuccess] = useState("");
 
+  useEffect(() => {
+    setSchedCfg(state.schedule);
+  }, [state.schedule]);
+
   async function handleSaveAll(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -45,6 +49,7 @@ export function SettingsView({ state, onStateChange }: SettingsViewProps) {
         timezone: schedCfg.timezone,
         mode: schedCfg.mode,
         sync_gravatar: schedCfg.sync_gravatar,
+        gravatar_only: schedCfg.gravatar_only,
       });
       const res = await api.updateSettings({
         run: runCfg,
@@ -116,6 +121,7 @@ export function SettingsView({ state, onStateChange }: SettingsViewProps) {
     try {
       const res = await api.importYaml(yamlText);
       onStateChange(res.state);
+      setSchedCfg(res.state.schedule);
       setRunCfg(res.state.settings.run);
       setAiCfg(res.state.settings.ai);
       setThumbCfg(res.state.settings.thumbnail);
@@ -239,7 +245,7 @@ export function SettingsView({ state, onStateChange }: SettingsViewProps) {
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2 border-t border-slate-100">
             <div className="space-y-2">
-              <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={schedCfg.sync_gravatar}
@@ -247,6 +253,16 @@ export function SettingsView({ state, onStateChange }: SettingsViewProps) {
                   className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span>Re-sync linked websites from connected Gravatar profile before each scheduled run</span>
+              </label>
+
+              <label className="flex items-center gap-2 text-xs text-slate-800 font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={schedCfg.gravatar_only !== false}
+                  onChange={(e) => setSchedCfg({ ...schedCfg, gravatar_only: e.target.checked })}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span>Post strictly about Gravatar-included websites only (exclude manual URLs)</span>
               </label>
 
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono tabular-nums">
@@ -267,7 +283,13 @@ export function SettingsView({ state, onStateChange }: SettingsViewProps) {
                 </span>
               </div>
               {state.schedule.last_error && (
-                <div className="text-xs text-red-700">{state.schedule.last_error}</div>
+                <div
+                  className={`text-xs ${
+                    state.schedule.last_status === "error" ? "text-red-700" : "text-slate-600"
+                  }`}
+                >
+                  {state.schedule.last_error}
+                </div>
               )}
             </div>
 

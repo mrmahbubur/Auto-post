@@ -1,5 +1,6 @@
 import {
   DEFAULT_SCHEDULE_SETTINGS,
+  deleteSite,
   getSetting,
   listAllUserIds,
   listPlatformStates,
@@ -21,8 +22,18 @@ import type {
 } from "./types.ts";
 
 const activeRuns = new Set<string>();
+const initialSyncInFlight = new Set<string>();
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
 let tickInFlight = false;
+
+export function setInitialGravatarSyncInFlight(userId: string, active: boolean): void {
+  if (active) initialSyncInFlight.add(userId);
+  else initialSyncInFlight.delete(userId);
+}
+
+export function isInitialGravatarSyncInFlight(userId: string): boolean {
+  return initialSyncInFlight.has(userId);
+}
 
 export function isValidTimeZone(tz: string): boolean {
   if (!tz || typeof tz !== "string") return false;
@@ -156,6 +167,7 @@ export function getUserSchedule(userId: string): ScheduleSettings {
     post_time: postTime,
     frequency: freq,
     mode: raw.mode === "dry" ? "dry" : "live",
+    gravatar_only: typeof raw.gravatar_only === "boolean" ? raw.gravatar_only : true,
     next_run_at:
       raw.enabled && !raw.next_run_at
         ? computeNextRunAt(freq, postTime, tz)
@@ -175,6 +187,8 @@ export function saveUserSchedule(userId: string, patch: Partial<ScheduleSettings
   const mode = patch.mode === "dry" || patch.mode === "live" ? patch.mode : current.mode;
   const sync_gravatar =
     typeof patch.sync_gravatar === "boolean" ? patch.sync_gravatar : current.sync_gravatar;
+  const gravatar_only =
+    typeof patch.gravatar_only === "boolean" ? patch.gravatar_only : current.gravatar_only;
 
   const scheduleChanged =
     frequency !== current.frequency ||
@@ -197,6 +211,7 @@ export function saveUserSchedule(userId: string, patch: Partial<ScheduleSettings
     post_time,
     mode,
     sync_gravatar,
+    gravatar_only,
     next_run_at,
   };
 
@@ -253,6 +268,14 @@ export async function syncGravatarForUser(
     syncedSites.push({ site: saved, discovery: item.discovery });
   }
 
+  // Prune previously synced Gravatar sites that are no longer included on the connected Gravatar profile
+  const activeSyncedIds = new Set(syncedSites.map((s) => s.site.id));
+  for (const oldSite of existingSites) {
+    if (oldSite.source === "gravatar" && !activeSyncedIds.has(oldSite.id)) {
+      deleteSite(oldSite.id, userId);
+    }
+  }
+
   const nextConn: GravatarConnection = {
     identifier,
     auto_sync: typeof autoSync === "boolean" ? autoSync : current.auto_sync,
@@ -305,11 +328,16 @@ export async function executeAutoPostCycle(
       }
     }
 
-    // 2. Check sites & connected platforms
-    const enabledSites = listSites(userId).filter((s) => s.enabled);
+    // 2. Check sites & connected platforms (strictly Gravatar-included websites when gravatar_only is enabled)
+    const enforceGravatarOnly = initialSchedule.gravatar_only !== false;
+    const enabledSites = listSites(userId).filter(
+      (s) => s.enabled && (!enforceGravatarOnly || s.source === "gravatar")
+    );
     if (enabledSites.length === 0) {
       throw new Error(
-        "No enabled sites found. Connect a Gravatar profile with linked websites or add a site under Sites & Feeds."
+        enforceGravatarOnly
+          ? "No websites included on your Gravatar profile were found. Add website links on your Gravatar profile and re-sync."
+          : "No enabled sites found. Connect a Gravatar profile with linked websites or add a site under Sites & Feeds."
       );
     }
 
@@ -326,10 +354,8 @@ export async function executeAutoPostCycle(
       runMode = "preview-all";
     } else if (readyPlats.length === 0) {
       if (trigger === "manual") {
-        // Fallback to preview-all when user clicks Test/Run Auto-Cycle Now without API keys yet?
-        // No, keep real behavior honest: report missing credentials clearly.
         throw new Error(
-          "No enabled social platform has credentials configured yet. Add keys under Platforms & Keys or switch Daily Schedule mode to Dry Preview."
+          "No enabled social platform has credentials configured yet. Add keys under Platforms & Keys or switch Automatic Mode to Dry Preview."
         );
       }
       throw new Error(
@@ -337,10 +363,11 @@ export async function executeAutoPostCycle(
       );
     }
 
-    // 3. Execute full pipeline: scrape feeds/pages -> Gemini copy -> 1200x630 PNG -> upload/sign -> publish
+    // 3. Execute full pipeline: scrape Gravatar websites -> write captions -> 1200x630 PNG -> upload/sign -> publish
     const run = await runPipeline({
       userId,
       mode: runMode,
+      gravatarOnly: enforceGravatarOnly,
     });
 
     const nextRunAt = initialSchedule.enabled

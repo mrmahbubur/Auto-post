@@ -8,24 +8,37 @@ import {
   Download,
   ExternalLink,
   FileCode2,
+  Globe,
   Loader2,
   Play,
   RefreshCw,
   Rss,
   Send,
+  Settings2,
   Sparkles,
+  Trash2,
   UserCheck,
 } from "lucide-react";
 import { api } from "../api";
-import type { Article, BootstrapState, CopyDeck, GravatarProfile, RunRecord, SiteConfig } from "../types";
+import type {
+  Article,
+  BootstrapState,
+  CopyDeck,
+  RunRecord,
+  ScheduleSettings,
+  SiteConfig,
+} from "../types";
 import { AuthImage } from "./AuthImage";
 import { ReportPreviewModal } from "./ReportPreviewModal";
+
+export type PipelineNavTarget = "pipeline" | "sites" | "platforms" | "ledger" | "settings" | "account";
 
 interface PipelineViewProps {
   state: BootstrapState;
   onStateChange: (next: BootstrapState) => void;
   preselectedArticle?: { siteId: string; article: Article } | null;
   onClearPreselected?: () => void;
+  onNavigate?: (tab: PipelineNavTarget) => void;
 }
 
 const PLATFORM_COPY_FIELDS: Array<{
@@ -40,12 +53,26 @@ const PLATFORM_COPY_FIELDS: Array<{
   { platform: "mastodon", label: "Mastodon", key: "mastodon", limit: 500 },
   { platform: "telegram", label: "Telegram", key: "telegram", limit: 1024 },
   { platform: "discord", label: "Discord", key: "discord", limit: 400 },
-  { platform: "devto", label: "Dev.to", key: "devto_title", extraKey: "devto_description", extraLabel: "Description", limit: 100 },
+  {
+    platform: "devto",
+    label: "Dev.to",
+    key: "devto_title",
+    extraKey: "devto_description",
+    extraLabel: "Description",
+    limit: 100,
+  },
   { platform: "facebook_page", label: "Facebook Page", key: "facebook_page", limit: 2000 },
   { platform: "linkedin", label: "LinkedIn", key: "linkedin", limit: 1300 },
   { platform: "threads", label: "Threads", key: "threads", limit: 500 },
-  { platform: "pinterest", label: "Pinterest", key: "facebook_page", limit: 500 },
-  { platform: "reddit", label: "Reddit", key: "reddit_title", extraKey: "reddit_body", extraLabel: "Self / Body", limit: 300 },
+  { platform: "pinterest", label: "Pinterest", key: "pinterest", limit: 500 },
+  {
+    platform: "reddit",
+    label: "Reddit",
+    key: "reddit_title",
+    extraKey: "reddit_body",
+    extraLabel: "Self / Body",
+    limit: 300,
+  },
   { platform: "x", label: "X (Twitter)", key: "x", limit: 280 },
 ];
 
@@ -54,69 +81,136 @@ export function PipelineView({
   onStateChange,
   preselectedArticle,
   onClearPreselected,
+  onNavigate,
 }: PipelineViewProps) {
-  const [selectedSiteId, setSelectedSiteId] = useState<string>(state.sites[0]?.id || "");
-  const [discovered, setDiscovered] = useState<Article[]>([]);
-  const [discovering, setDiscovering] = useState(false);
-  const [customUrl, setCustomUrl] = useState("");
-  const [fetchingUrl, setFetchingUrl] = useState(false);
+  const gravatarOnly = state.schedule.gravatar_only !== false;
+  const gravatarSites = state.sites.filter((s) => s.source === "gravatar");
+  const eligibleSites: SiteConfig[] = gravatarOnly ? gravatarSites : state.sites;
+  const enabledEligibleSites = eligibleSites.filter((s) => s.enabled);
 
-  const [sourceMode, setSourceMode] = useState<"feed" | "gravatar">("feed");
-  const [gravatarInput, setGravatarInput] = useState(
-    state.gravatar?.identifier || state.user?.email || ""
-  );
-  const [gravatarProfile, setGravatarProfile] = useState<GravatarProfile | null>(null);
-  const [gravatarSiteOverride, setGravatarSiteOverride] = useState<SiteConfig | null>(null);
-  const [loadingGravatar, setLoadingGravatar] = useState(false);
-
-  const [activeArticle, setActiveArticle] = useState<Article | null>(null);
-  const [copyDeck, setCopyDeck] = useState<CopyDeck | null>(null);
-  const [imageFilename, setImageFilename] = useState<string>("");
-  const [thumbRev, setThumbRev] = useState<number>(1);
-  const [writerUsed, setWriterUsed] = useState<"gemini" | "template">("template");
-  const [preparing, setPreparing] = useState(false);
-  const [rerendering, setRerendering] = useState(false);
-
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(() => {
-    const enabled = state.platforms.filter((p) => p.enabled).map((p) => p.name);
-    return enabled.length ? enabled : ["bluesky"];
-  });
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
-  // Batch pipeline & daily scheduler state
-  const [batchMode, setBatchMode] = useState<"preview-all" | "dry" | "live">("preview-all");
-  const [batchSiteId, setBatchSiteId] = useState<string>("");
-  const [ignoreLedger, setIgnoreLedger] = useState(false);
-  const [runningBatch, setRunningBatch] = useState(false);
-  const [runningAutoCycle, setRunningAutoCycle] = useState(false);
+  // Step 1: Gravatar connection state
   const [gravSyncInput, setGravSyncInput] = useState(
     state.gravatar?.identifier || state.user?.email || ""
   );
   const [syncingGravSites, setSyncingGravSites] = useState(false);
-  const [automationNotice, setAutomationNotice] = useState("");
+
+  // Step 2: Website & article discovery + persisted staged post composer
+  const [selectedSiteId, setSelectedSiteId] = useState<string>(
+    state.stagedPost?.site?.id || eligibleSites[0]?.id || ""
+  );
+  const [discovered, setDiscovered] = useState<Article[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverError, setDiscoverError] = useState("");
+  const [customUrl, setCustomUrl] = useState("");
+  const [fetchingUrl, setFetchingUrl] = useState(false);
+
+  const [activeSite, setActiveSite] = useState<SiteConfig | null>(state.stagedPost?.site || null);
+  const [activeArticle, setActiveArticle] = useState<Article | null>(
+    state.stagedPost?.article || null
+  );
+  const [copyDeck, setCopyDeck] = useState<CopyDeck | null>(state.stagedPost?.copy || null);
+  const [imageFilename, setImageFilename] = useState<string>(
+    state.stagedPost?.image_filename || ""
+  );
+  const [thumbRev, setThumbRev] = useState<number>(1);
+  const [writerUsed, setWriterUsed] = useState<"gemini" | "template">(
+    state.stagedPost?.writerUsed || "template"
+  );
+  const [hydratedGeneratedAt, setHydratedGeneratedAt] = useState<number | null>(
+    state.stagedPost?.generated_at ?? null
+  );
+
+  const [generatingFirst, setGeneratingFirst] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const [rerendering, setRerendering] = useState(false);
   const [publishingComposer, setPublishingComposer] = useState(false);
-  const [latestRun, setLatestRun] = useState<RunRecord | null>(state.runs[0] || null);
-  const [errorMsg, setErrorMsg] = useState<string>("");
-  const [confirmLiveBatch, setConfirmLiveBatch] = useState(false);
   const [confirmLiveComposer, setConfirmLiveComposer] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(() => {
+    const ready = state.platforms.filter((p) => p.enabled && p.ready).map((p) => p.name);
+    if (ready.length > 0) return ready;
+    const enabled = state.platforms.filter((p) => p.enabled).map((p) => p.name);
+    return enabled.length > 0 ? enabled : ["bluesky"];
+  });
+
+  // Step 3: Automatic social posting schedule
+  const [schedDraft, setSchedDraft] = useState<ScheduleSettings>(state.schedule);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [runningAutoCycle, setRunningAutoCycle] = useState(false);
+
+  // Batch runner & run report
+  const [batchMode, setBatchMode] = useState<"preview-all" | "dry" | "live">("preview-all");
+  const [batchSiteId, setBatchSiteId] = useState<string>("");
+  const [ignoreLedger, setIgnoreLedger] = useState(false);
+  const [runningBatch, setRunningBatch] = useState(false);
+  const [confirmLiveBatch, setConfirmLiveBatch] = useState(false);
+  const [latestRun, setLatestRun] = useState<RunRecord | null>(state.runs[0] || null);
   const [previewReportId, setPreviewReportId] = useState<string | null>(null);
 
+  const [automationNotice, setAutomationNotice] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  // Sync schedule draft when server state updates
   useEffect(() => {
-    if (!selectedSiteId && state.sites[0]?.id) {
-      setSelectedSiteId(state.sites[0].id);
+    setSchedDraft(state.schedule);
+  }, [state.schedule]);
+
+  // Hydrate generated post & thumbnail from SQLite state.stagedPost
+  useEffect(() => {
+    const staged = state.stagedPost;
+    if (!staged) return;
+    if (staged.generated_at !== hydratedGeneratedAt) {
+      setActiveSite(staged.site);
+      setSelectedSiteId(staged.site.id);
+      setActiveArticle(staged.article);
+      setCopyDeck(staged.copy);
+      setImageFilename(staged.image_filename);
+      setWriterUsed(staged.writerUsed);
+      setHydratedGeneratedAt(staged.generated_at);
+      setThumbRev((n) => n + 1);
     }
-  }, [state.sites, selectedSiteId]);
+  }, [state.stagedPost, hydratedGeneratedAt]);
+
+  // Keep selectedSiteId valid for active site policy
+  useEffect(() => {
+    if (eligibleSites.length === 0) {
+      if (selectedSiteId) setSelectedSiteId("");
+      if (discovered.length > 0) setDiscovered([]);
+      if (batchSiteId) setBatchSiteId("");
+      return;
+    }
+    if (!selectedSiteId || !eligibleSites.some((s) => s.id === selectedSiteId)) {
+      setSelectedSiteId(eligibleSites[0].id);
+    }
+    if (batchSiteId && !eligibleSites.some((s) => s.id === batchSiteId)) {
+      setBatchSiteId("");
+    }
+  }, [eligibleSites, selectedSiteId, batchSiteId, discovered.length]);
+
+  useEffect(() => {
+    if (state.runs[0] && (!latestRun || state.runs[0].id !== latestRun.id)) {
+      setLatestRun(state.runs[0]);
+    }
+  }, [state.runs, latestRun]);
 
   useEffect(() => {
     if (preselectedArticle) {
-      setSelectedSiteId(preselectedArticle.siteId);
-      handlePrepare(preselectedArticle.siteId, preselectedArticle.article);
+      const targetSite = eligibleSites.find((s) => s.id === preselectedArticle.siteId);
+      if (targetSite) {
+        setSelectedSiteId(targetSite.id);
+        handlePrepare(targetSite.id, preselectedArticle.article);
+      } else {
+        setErrorMsg(
+          "Strict Gravatar-Only mode is active: manual non-Gravatar websites cannot be prepared."
+        );
+      }
       onClearPreselected?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preselectedArticle]);
 
-  // Initial feed discovery for the first configured site
+  // Initial article discovery for the active eligible website
   useEffect(() => {
     if (selectedSiteId && discovered.length === 0) {
       handleDiscoverSite(selectedSiteId, true);
@@ -127,14 +221,95 @@ export function PipelineView({
   async function handleDiscoverSite(siteId: string, silent = false) {
     if (!siteId) return;
     setDiscovering(true);
+    setDiscoverError("");
     if (!silent) setErrorMsg("");
     try {
       const res = await api.discoverSite(siteId, state.settings.run.lookback_days, 10);
       setDiscovered(res.articles);
     } catch (err) {
-      if (!silent) setErrorMsg(err instanceof Error ? err.message : "Failed to discover feed");
+      const msg = err instanceof Error ? err.message : "Failed to discover website articles";
+      setDiscoverError(msg);
+      if (!silent) setErrorMsg(msg);
     } finally {
       setDiscovering(false);
+    }
+  }
+
+  async function handleSyncGravatarLinkedSites() {
+    if (!gravSyncInput.trim()) {
+      setErrorMsg("Enter a Gravatar username, profile URL, or email.");
+      return;
+    }
+    setSyncingGravSites(true);
+    setErrorMsg("");
+    setAutomationNotice("");
+    try {
+      const res = await api.syncGravatar(gravSyncInput.trim(), true);
+      onStateChange(res.state);
+      if (res.syncedSites.length > 0) {
+        const firstId = res.syncedSites[0].site.id;
+        setSelectedSiteId(firstId);
+        handleDiscoverSite(firstId, true);
+        setAutomationNotice(
+          `Synced ${res.syncedSites.length} Gravatar-included website${
+            res.syncedSites.length === 1 ? "" : "s"
+          } from ${res.profile.display_name}. Next: generate your first real post & thumbnail in Step 2.`
+        );
+      } else {
+        setDiscovered([]);
+        setAutomationNotice(
+          `Connected ${res.profile.display_name} (@${res.profile.username}), but no website URLs were listed on this Gravatar profile yet. Add your website link on Gravatar and re-sync.`
+        );
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to sync Gravatar websites");
+    } finally {
+      setSyncingGravSites(false);
+    }
+  }
+
+  async function handleGenerateFirstPost(articleUrl?: string) {
+    setGeneratingFirst(true);
+    setErrorMsg("");
+    setAutomationNotice("");
+    try {
+      const res = await api.generateFirstPost({
+        identifier: gravSyncInput.trim() || undefined,
+        siteId: selectedSiteId || undefined,
+        articleUrl,
+      });
+      onStateChange(res.state);
+      setDiscovered(res.availableArticles);
+      setActiveSite(res.stagedPost.site);
+      setSelectedSiteId(res.stagedPost.site.id);
+      setActiveArticle(res.stagedPost.article);
+      setCopyDeck(res.stagedPost.copy);
+      setImageFilename(res.stagedPost.image_filename);
+      setWriterUsed(res.stagedPost.writerUsed);
+      setHydratedGeneratedAt(res.stagedPost.generated_at);
+      setThumbRev((n) => n + 1);
+      setAutomationNotice(
+        `Generated real copy deck + 1200×630 PNG thumbnail from ${res.stagedPost.site.name}. Review below or publish live.`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to generate first post and thumbnail");
+    } finally {
+      setGeneratingFirst(false);
+    }
+  }
+
+  async function handleClearStaged() {
+    setErrorMsg("");
+    try {
+      const res = await api.clearStagedPost();
+      onStateChange(res.state);
+      setActiveArticle(null);
+      setActiveSite(null);
+      setCopyDeck(null);
+      setImageFilename("");
+      setHydratedGeneratedAt(null);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to clear generated draft");
     }
   }
 
@@ -157,9 +332,9 @@ export function PipelineView({
   async function handlePrepare(siteId: string, article: Article) {
     setPreparing(true);
     setErrorMsg("");
-    setGravatarProfile(null);
-    setGravatarSiteOverride(null);
     setActiveArticle(article);
+    const matchingSite = eligibleSites.find((s) => s.id === siteId) || null;
+    setActiveSite(matchingSite);
     try {
       const res = await api.prepareArticle(siteId, article);
       setActiveArticle(res.article);
@@ -168,34 +343,8 @@ export function PipelineView({
       setImageFilename(res.image_filename);
       setThumbRev((n) => n + 1);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to prepare article copy");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to generate post and thumbnail");
     } finally {
-      setPreparing(false);
-    }
-  }
-
-  async function handlePrepareGravatar(customIdentifier?: string) {
-    const id = (customIdentifier ?? gravatarInput).trim();
-    if (!id) return;
-    if (customIdentifier) setGravatarInput(customIdentifier);
-    setLoadingGravatar(true);
-    setPreparing(true);
-    setErrorMsg("");
-    try {
-      const res = await api.prepareGravatar(id, selectedSiteId);
-      setGravatarProfile(res.profile);
-      setGravatarSiteOverride(res.site);
-      setActiveArticle(res.article);
-      setCopyDeck(res.copy);
-      setWriterUsed(res.writerUsed);
-      setImageFilename(res.image_filename);
-      setThumbRev((n) => n + 1);
-      // Select all 11 platforms when generating from Gravatar profile
-      setSelectedPlatforms(state.platforms.map((p) => p.name));
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to fetch Gravatar profile");
-    } finally {
-      setLoadingGravatar(false);
       setPreparing(false);
     }
   }
@@ -205,14 +354,12 @@ export function PipelineView({
     setRerendering(true);
     setErrorMsg("");
     try {
-      const res = await api.rerenderThumbnail(selectedSiteId, activeArticle, copyDeck, {
-        siteOverride: gravatarSiteOverride || undefined,
-        avatarUrl: gravatarProfile?.avatar_url || undefined,
-      });
+      const targetSiteId = activeSite?.id || selectedSiteId;
+      const res = await api.rerenderThumbnail(targetSiteId, activeArticle, copyDeck);
       setImageFilename(res.image_filename);
       setThumbRev((n) => n + 1);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to re-render thumbnail");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to re-render 1200×630 PNG");
     } finally {
       setRerendering(false);
     }
@@ -224,26 +371,86 @@ export function PipelineView({
       setErrorMsg("Select at least one platform to publish.");
       return;
     }
+    const targetSiteId = activeSite?.id || selectedSiteId;
+    if (!targetSiteId) {
+      setErrorMsg("Select a Gravatar-included website first.");
+      return;
+    }
     setPublishingComposer(true);
     setConfirmLiveComposer(false);
     setErrorMsg("");
+    setAutomationNotice("");
     try {
       const res = await api.publishPrepared({
-        siteId: selectedSiteId || gravatarSiteOverride?.id || "direct-url",
-        siteOverride: gravatarSiteOverride || undefined,
+        siteId: targetSiteId,
         article: activeArticle,
         copy: copyDeck,
         image_filename: imageFilename,
         platforms: selectedPlatforms,
         mode,
-        avatarUrl: gravatarProfile?.avatar_url || undefined,
       });
       setLatestRun(res.run);
       onStateChange(res.state);
+      setAutomationNotice(
+        mode === "live"
+          ? `Published generated post: ${res.run.counts.ok} live, ${res.run.counts.error} errors.`
+          : `Saved dry preview across ${res.run.counts.dry} selected platform(s).`
+      );
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Publish failed");
     } finally {
       setPublishingComposer(false);
+    }
+  }
+
+  async function handleSaveAutomation(enableOverride?: boolean) {
+    setSavingSchedule(true);
+    setErrorMsg("");
+    setAutomationNotice("");
+    try {
+      const nextEnabled = enableOverride !== undefined ? enableOverride : schedDraft.enabled;
+      const res = await api.updateSchedule({
+        enabled: nextEnabled,
+        frequency: schedDraft.frequency,
+        post_time: schedDraft.post_time,
+        timezone: schedDraft.timezone,
+        mode: schedDraft.mode,
+        sync_gravatar: schedDraft.sync_gravatar,
+        gravatar_only: schedDraft.gravatar_only,
+      });
+      onStateChange(res.state);
+      setSchedDraft(res.state.schedule);
+      setAutomationNotice(
+        nextEnabled
+          ? `Automatic social posting is now ACTIVE (${res.state.schedule.frequency}, ${
+              res.state.schedule.gravatar_only !== false ? "Gravatar websites only" : "all active websites"
+            }).`
+          : "Automatic social posting schedule saved and paused."
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to save automatic schedule");
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function handleRunDailyCycleNow() {
+    setRunningAutoCycle(true);
+    setErrorMsg("");
+    setAutomationNotice("");
+    try {
+      const res = await api.runScheduleNow();
+      if (res.run) setLatestRun(res.run);
+      onStateChange(res.state);
+      setAutomationNotice(
+        `Automatic cycle finished: ${res.run?.counts.ok ?? 0} live published, ${
+          res.run?.counts.dry ?? 0
+        } previewed, ${res.run?.counts.error ?? 0} errors.`
+      );
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Automatic cycle failed");
+    } finally {
+      setRunningAutoCycle(false);
     }
   }
 
@@ -257,6 +464,7 @@ export function PipelineView({
         mode: batchMode,
         siteId: batchSiteId || undefined,
         ignoreLedger,
+        gravatarOnly,
       });
       setLatestRun(res.run);
       onStateChange(res.state);
@@ -264,64 +472,6 @@ export function PipelineView({
       setErrorMsg(err instanceof Error ? err.message : "Pipeline run failed");
     } finally {
       setRunningBatch(false);
-    }
-  }
-
-  async function handleSyncGravatarLinkedSites() {
-    if (!gravSyncInput.trim()) {
-      setErrorMsg("Enter a Gravatar username, profile URL, or email.");
-      return;
-    }
-    setSyncingGravSites(true);
-    setErrorMsg("");
-    setAutomationNotice("");
-    try {
-      const res = await api.syncGravatar(gravSyncInput.trim(), true);
-      onStateChange(res.state);
-      if (res.syncedSites.length > 0) {
-        const firstId = res.syncedSites[0].site.id;
-        setSelectedSiteId(firstId);
-        handleDiscoverSite(firstId, true);
-        setAutomationNotice(
-          `Synced ${res.syncedSites.length} linked site${res.syncedSites.length === 1 ? "" : "s"} from ${res.profile.display_name}.`
-        );
-      } else {
-        setAutomationNotice(
-          `Connected ${res.profile.display_name} (@${res.profile.username}), but no external website links were found on this Gravatar profile yet.`
-        );
-      }
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to sync Gravatar linked sites");
-    } finally {
-      setSyncingGravSites(false);
-    }
-  }
-
-  async function handleToggleDailySchedule() {
-    setErrorMsg("");
-    try {
-      const res = await api.updateSchedule({ enabled: !state.schedule.enabled });
-      onStateChange(res.state);
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to update daily schedule");
-    }
-  }
-
-  async function handleRunDailyCycleNow() {
-    setRunningAutoCycle(true);
-    setErrorMsg("");
-    setAutomationNotice("");
-    try {
-      const res = await api.runScheduleNow();
-      if (res.run) setLatestRun(res.run);
-      onStateChange(res.state);
-      setAutomationNotice(
-        `Automated cycle finished: ${res.run?.counts.ok ?? 0} live published, ${res.run?.counts.dry ?? 0} previewed.`
-      );
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Automated cycle failed");
-    } finally {
-      setRunningAutoCycle(false);
     }
   }
 
@@ -356,45 +506,55 @@ export function PipelineView({
 
   const readyPlatformsCount = state.platforms.filter((p) => p.enabled && p.ready).length;
   const enabledPlatformsCount = state.platforms.filter((p) => p.enabled).length;
-  const enabledSitesCount = state.sites.filter((s) => s.enabled).length;
   const livePostsCount = state.ledger.filter((l) => l.status === "ok").length;
+  const hasGeneratedPost = Boolean(activeArticle && copyDeck && imageFilename);
 
   return (
     <div className="space-y-6">
       {/* 4-column KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200 rounded-xl divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
         <div className="p-4 sm:p-5">
-          <div className="text-xs font-medium text-slate-500">Configured Sites</div>
+          <div className="text-xs font-medium text-slate-500">Gravatar Websites</div>
           <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 font-mono tabular-nums">
-            {state.sites.filter((s) => s.enabled).length}
-            <span className="text-sm font-normal text-slate-400"> / {state.sites.length}</span>
+            {gravatarSites.filter((s) => s.enabled).length}
+            <span className="text-sm font-normal text-slate-400"> / {gravatarSites.length}</span>
           </div>
-          <div className="mt-1 text-xs text-slate-500">RSS, Atom, or sitemap sources</div>
+          <div className="mt-1 text-xs text-slate-500">
+            {gravatarOnly ? "Strictly Gravatar-included only" : "All sites enabled"}
+          </div>
         </div>
+
+        <div className="p-4 sm:p-5">
+          <div className="text-xs font-medium text-slate-500">Generated Post & PNG</div>
+          <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 font-mono tabular-nums">
+            {hasGeneratedPost ? "Ready" : "Pending"}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            {hasGeneratedPost ? `${writerUsed} copy · 1200×630 PNG` : "Generate in Step 2 first"}
+          </div>
+        </div>
+
         <div className="p-4 sm:p-5">
           <div className="text-xs font-medium text-slate-500">Platforms Ready</div>
           <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 font-mono tabular-nums">
             {readyPlatformsCount}
             <span className="text-sm font-normal text-slate-400"> / {enabledPlatformsCount} enabled</span>
           </div>
-          <div className="mt-1 text-xs text-slate-500">11 official API publishers</div>
-        </div>
-        <div className="p-4 sm:p-5">
-          <div className="text-xs font-medium text-slate-500">Ledger Published</div>
-          <div className="mt-1 text-2xl font-semibold tracking-tight text-slate-900 font-mono tabular-nums">
-            {livePostsCount}
-            <span className="text-sm font-normal text-slate-400"> / {state.ledger.length} entries</span>
+          <div className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
+            {livePostsCount} live in ledger
           </div>
-          <div className="mt-1 text-xs text-slate-500">Duplicate-safe SQLite memory</div>
         </div>
+
         <div className="p-4 sm:p-5">
-          <div className="text-xs font-medium text-slate-500">Daily Auto-Post</div>
+          <div className="text-xs font-medium text-slate-500">Automatic Posting</div>
           <div className="mt-1 flex items-center gap-2 text-lg font-semibold text-slate-900 font-mono tabular-nums">
-            <CalendarClock className={`w-4 h-4 shrink-0 ${state.schedule.enabled ? "text-emerald-600" : "text-slate-400"}`} />
+            <CalendarClock
+              className={`w-4 h-4 shrink-0 ${state.schedule.enabled ? "text-emerald-600" : "text-slate-400"}`}
+            />
             <span>
               {state.schedule.enabled
                 ? state.schedule.frequency === "daily"
-                  ? `${state.schedule.post_time}`
+                  ? state.schedule.post_time
                   : state.schedule.frequency === "every_12h"
                   ? "12h"
                   : "6h"
@@ -404,7 +564,7 @@ export function PipelineView({
           <div className="mt-1 text-xs text-slate-500 font-mono tabular-nums truncate">
             {state.schedule.enabled
               ? `${state.schedule.timezone} · ${state.schedule.mode === "live" ? "Live APIs" : "Dry mode"}`
-              : "Enable in schedule below"}
+              : "Activate in Step 3 below"}
           </div>
         </div>
       </div>
@@ -416,8 +576,9 @@ export function PipelineView({
             <span>{errorMsg}</span>
           </div>
           <button
+            type="button"
             onClick={() => setErrorMsg("")}
-            className="text-xs font-medium text-red-700 hover:underline shrink-0"
+            className="text-xs font-medium text-red-700 hover:underline shrink-0 cursor-pointer"
           >
             Dismiss
           </button>
@@ -431,6 +592,7 @@ export function PipelineView({
             <span>{automationNotice}</span>
           </div>
           <button
+            type="button"
             onClick={() => setAutomationNotice("")}
             className="text-xs font-medium text-emerald-700 hover:underline shrink-0 cursor-pointer"
           >
@@ -439,201 +601,144 @@ export function PipelineView({
         </div>
       )}
 
-      {/* Gravatar Auto-Sync + Daily Scheduler + Manual Batch Runner */}
-      <section className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-5">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-base font-semibold text-slate-900">Automated Gravatar Daily Pipeline</h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              Syncs linked websites from your Gravatar profile, generates AI captions + 1200×630 PNG thumbnails, and posts automatically to connected social platforms daily.
+      {/* STEP 1: Connect Gravatar Profile (Included Websites Only) */}
+      <section className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div>
+            <div className="text-xs font-mono uppercase tracking-wider text-blue-600 font-semibold">
+              Step 01 · Gravatar Source Lock
+            </div>
+            <h2 className="mt-0.5 text-base font-semibold text-slate-900">
+              Connect Gravatar Profile & Sync Included Websites
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Only websites listed on your connected Gravatar profile are discovered and allowed into post generation and automatic social posting.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={handleToggleDailySchedule}
-              className={`h-9 px-3.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                state.schedule.enabled
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-              }`}
-            >
-              {state.schedule.enabled ? "Daily Auto-Post: ON" : "Daily Auto-Post: PAUSED"}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleRunDailyCycleNow}
-              disabled={runningAutoCycle}
-              className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              {runningAutoCycle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              <span>{runningAutoCycle ? "Running Full Cycle..." : "Run Auto-Cycle Now"}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Gravatar Linked Sites Sync Input Row */}
-        <div className="pt-4 border-t border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="flex-1 flex flex-col sm:flex-row gap-2.5">
-            <input
-              type="text"
-              value={gravSyncInput}
-              onChange={(e) => setGravSyncInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  handleSyncGravatarLinkedSites();
-                }
-              }}
-              placeholder="Gravatar username, profile URL, or email to sync linked websites"
-              className="flex-1 h-9 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button
-              type="button"
-              onClick={handleSyncGravatarLinkedSites}
-              disabled={syncingGravSites || !gravSyncInput.trim()}
-              className="inline-flex items-center justify-center gap-2 h-9 px-4 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              {syncingGravSites ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-              <span>{syncingGravSites ? "Syncing Linked Sites..." : "Sync Gravatar Linked Sites"}</span>
-            </button>
-          </div>
-
-          <div className="text-xs text-slate-500 font-mono tabular-nums whitespace-nowrap">
-            {state.gravatar?.profile
-              ? `${state.gravatar.profile.display_name} · ${state.gravatar.synced_site_ids.length} linked site${state.gravatar.synced_site_ids.length === 1 ? "" : "s"}`
-              : "No Gravatar synced yet"}
-          </div>
-        </div>
-
-        {/* Manual Batch Sweeper Row */}
-        <div className="pt-4 border-t border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="text-xs font-medium text-slate-600">
-            Manual Batch Sweep
-            <span className="text-slate-400 font-normal"> · Next scheduled run: </span>
-            <span className="font-mono tabular-nums text-slate-700">
-              {state.schedule.enabled && state.schedule.next_run_at
-                ? new Date(state.schedule.next_run_at * 1000).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                : "Paused"}
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2.5">
-            <select
-              value={batchSiteId}
-              onChange={(e) => setBatchSiteId(e.target.value)}
-              className="h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">All enabled sites</option>
-              {state.sites.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={batchMode}
-              onChange={(e) => {
-                setBatchMode(e.target.value as "preview-all" | "dry" | "live");
-                setConfirmLiveBatch(false);
-              }}
-              className="h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="preview-all">Preview All Enabled (no keys needed)</option>
-              <option value="dry">Dry Run (credentialed only)</option>
-              <option value="live">Live Publish (real APIs)</option>
-            </select>
-
-            <label className="inline-flex items-center gap-2 px-2.5 h-9 text-xs font-medium text-slate-600 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={ignoreLedger}
-                onChange={(e) => setIgnoreLedger(e.target.checked)}
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+          {state.gravatar?.profile && (
+            <div className="flex items-center gap-3 shrink-0">
+              <img
+                src={state.gravatar.profile.avatar_url}
+                alt={state.gravatar.profile.display_name}
+                referrerPolicy="no-referrer"
+                className="w-10 h-10 rounded-full object-cover border border-slate-200 bg-slate-100 shrink-0"
               />
-              <span>Re-run seen items</span>
-            </label>
-
-            {batchMode === "live" && !confirmLiveBatch ? (
-              <button
-                onClick={() => setConfirmLiveBatch(true)}
-                disabled={runningBatch || enabledSitesCount === 0}
-                className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Publish Live</span>
-              </button>
-            ) : batchMode === "live" && confirmLiveBatch ? (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleRunBatch}
-                  disabled={runningBatch || enabledSitesCount === 0}
-                  className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-                >
-                  {runningBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  <span>Confirm Live Post</span>
-                </button>
-                <button
-                  onClick={() => setConfirmLiveBatch(false)}
-                  className="h-9 px-3 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
-                >
-                  Cancel
-                </button>
+              <div className="text-xs min-w-0">
+                <div className="font-semibold text-slate-900 truncate">
+                  {state.gravatar.profile.display_name}
+                </div>
+                <div className="text-slate-500 font-mono tabular-nums truncate">
+                  @{state.gravatar.profile.username} · {gravatarSites.length} included site
+                  {gravatarSites.length === 1 ? "" : "s"}
+                </div>
               </div>
-            ) : (
-              <button
-                onClick={handleRunBatch}
-                disabled={runningBatch || enabledSitesCount === 0}
-                className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                {runningBatch ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                <span>{runningBatch ? "Running..." : "Execute Run"}</span>
-              </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
+
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <input
+            type="text"
+            value={gravSyncInput}
+            onChange={(e) => setGravSyncInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleSyncGravatarLinkedSites();
+              }
+            }}
+            placeholder="Gravatar username, profile URL (https://gravatar.com/name), or email"
+            className="flex-1 h-10 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            type="button"
+            onClick={handleSyncGravatarLinkedSites}
+            disabled={syncingGravSites || !gravSyncInput.trim()}
+            className="inline-flex items-center justify-center gap-2 h-10 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            {syncingGravSites ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <UserCheck className="w-4 h-4" />
+            )}
+            <span>{syncingGravSites ? "Syncing Websites..." : "Sync Gravatar Websites"}</span>
+          </button>
+        </div>
+
+        {gravatarSites.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {gravatarSites.map((site) => {
+              const isSelected = site.id === selectedSiteId;
+              return (
+                <button
+                  key={site.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedSiteId(site.id);
+                    handleDiscoverSite(site.id);
+                  }}
+                  className={`text-left p-3.5 rounded-lg border transition-colors cursor-pointer ${
+                    isSelected
+                      ? "border-blue-300 bg-blue-50/40"
+                      : "border-slate-200 bg-slate-50/50 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-slate-900 truncate">{site.name}</span>
+                    <span
+                      className={`text-xs font-medium shrink-0 ${
+                        site.enabled ? "text-emerald-700" : "text-slate-400"
+                      }`}
+                    >
+                      {site.enabled ? "Active" : "Paused"}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 font-mono truncate">
+                    <Globe className="w-3 h-3 shrink-0 text-slate-400" />
+                    <span className="truncate">{site.url}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-500 font-mono truncate">
+                    Source: {site.feed ? "RSS/Atom feed" : site.sitemap ? "XML sitemap" : "Direct page"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <span>
+              {state.gravatar?.profile
+                ? "Your connected Gravatar profile currently has 0 website links. Add your website URL under Links on Gravatar, then click Sync Gravatar Websites."
+                : "Enter your Gravatar username, URL, or email above to import the websites included on your Gravatar profile."}
+            </span>
+            <button
+              type="button"
+              onClick={() => onNavigate?.("sites")}
+              className="text-blue-600 hover:underline font-medium shrink-0 cursor-pointer"
+            >
+              Inspect Gravatar Websites
+            </button>
+          </div>
+        )}
       </section>
 
-      {/* Interactive Article & Gravatar Composer */}
+      {/* STEP 2: First Generate Real Post & 1200x630 PNG Thumbnail */}
       <section className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-5">
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-slate-100">
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Deck Composer & Thumbnail Studio</h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              Generate platform-native posts across all 11 platforms from an RSS/Atom article, a live URL, or a public Gravatar profile.
+            <div className="text-xs font-mono uppercase tracking-wider text-blue-600 font-semibold">
+              Step 02 · Real Generation Before Posting
+            </div>
+            <h2 className="mt-0.5 text-base font-semibold text-slate-900">
+              First Generate Real Post Copy & 1200×630 PNG Thumbnail
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Generates real multi-platform captions and renders a real 1200×630 PNG thumbnail from your Gravatar-included website before any automatic or live post runs.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
-              <button
-                type="button"
-                onClick={() => setSourceMode("feed")}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  sourceMode === "feed" ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Feed / Article URL
-              </button>
-              <button
-                type="button"
-                onClick={() => setSourceMode("gravatar")}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  sourceMode === "gravatar" ? "bg-white text-slate-900 shadow-xs" : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Gravatar Profile
-              </button>
-            </div>
-
-            {sourceMode === "feed" && state.sites.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {eligibleSites.length > 0 && (
               <>
                 <select
                   value={selectedSiteId}
@@ -643,237 +748,209 @@ export function PipelineView({
                   }}
                   className="h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-800"
                 >
-                  {state.sites.map((s) => (
+                  {eligibleSites.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
                   ))}
                 </select>
                 <button
+                  type="button"
                   onClick={() => handleDiscoverSite(selectedSiteId)}
                   disabled={discovering || !selectedSiteId}
-                  className="inline-flex items-center gap-2 h-9 px-3.5 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 h-9 px-3 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   {discovering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}
-                  <span>Refresh Feed</span>
+                  <span>Refresh Articles</span>
                 </button>
               </>
             )}
+
+            <button
+              type="button"
+              onClick={() => handleGenerateFirstPost()}
+              disabled={generatingFirst || (!gravSyncInput.trim() && gravatarSites.length === 0)}
+              className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {generatingFirst ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Sparkles className="w-4 h-4" />
+              )}
+              <span>
+                {generatingFirst
+                  ? "Generating Real Post & PNG..."
+                  : hasGeneratedPost
+                  ? "Regenerate Latest Post & PNG"
+                  : "Generate Real Post & Thumbnail"}
+              </span>
+            </button>
           </div>
         </div>
 
-        {sourceMode === "gravatar" ? (
-          <div className="space-y-4 pt-2 border-t border-slate-100">
-            <div className="flex flex-col sm:flex-row gap-2.5">
-              <input
-                type="text"
-                value={gravatarInput}
-                onChange={(e) => setGravatarInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handlePrepareGravatar();
-                  }
-                }}
-                placeholder="Gravatar username, profile URL (https://gravatar.com/...), email, or SHA-256/MD5 hash"
-                className="flex-1 h-10 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                type="button"
-                onClick={() => handlePrepareGravatar()}
-                disabled={loadingGravatar || !gravatarInput.trim()}
-                className="inline-flex items-center justify-center gap-2 h-10 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                {loadingGravatar ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserCheck className="w-4 h-4" />}
-                <span>Generate Posts for All 11 Platforms</span>
-              </button>
+        {/* Discovered articles from selected Gravatar website */}
+        {eligibleSites.length > 0 && (
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-medium text-slate-600">
+              <span>
+                Articles from{" "}
+                {eligibleSites.find((s) => s.id === selectedSiteId)?.name || "Gravatar website"} (
+                {discovered.length})
+              </span>
+              <span className="font-mono text-slate-500">
+                Writer:{" "}
+                {state.settings.ai.enabled && state.geminiReady
+                  ? `Gemini (${state.settings.ai.model})`
+                  : "Rule-based real formatter"}
+              </span>
             </div>
 
-            {gravatarProfile && (
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 bg-slate-50 border border-slate-200 rounded-lg">
-                <img
-                  src={gravatarProfile.avatar_url}
-                  alt={gravatarProfile.display_name}
-                  referrerPolicy="no-referrer"
-                  className="w-16 h-16 rounded-full object-cover border border-slate-200 shrink-0 bg-slate-200"
-                />
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-900">{gravatarProfile.display_name}</span>
-                    {gravatarProfile.pronouns && (
-                      <>
-                        <span className="text-slate-300">·</span>
-                        <span className="text-xs text-slate-500">{gravatarProfile.pronouns}</span>
-                      </>
-                    )}
-                    {(gravatarProfile.job_title || gravatarProfile.company) && (
-                      <>
-                        <span className="text-slate-300">·</span>
-                        <span className="text-xs text-slate-600">
-                          {[gravatarProfile.job_title, gravatarProfile.company].filter(Boolean).join(" @ ")}
-                        </span>
-                      </>
-                    )}
-                    {gravatarProfile.location && (
-                      <>
-                        <span className="text-slate-300">·</span>
-                        <span className="text-xs text-slate-500">{gravatarProfile.location}</span>
-                      </>
-                    )}
-                  </div>
-                  {gravatarProfile.description && (
-                    <p className="text-xs text-slate-600 line-clamp-2">{gravatarProfile.description}</p>
-                  )}
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <a
-                      href={gravatarProfile.profile_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 hover:underline font-mono"
+            {discovering && discovered.length === 0 ? (
+              <div className="p-5 text-sm text-slate-500 flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Discovering articles from Gravatar-included website...</span>
+              </div>
+            ) : discoverError && discovered.length === 0 ? (
+              <div className="p-4 text-xs text-red-700 bg-red-50/50 flex items-center justify-between gap-3">
+                <span>Feed discovery failed: {discoverError}</span>
+                <button
+                  type="button"
+                  onClick={() => handleDiscoverSite(selectedSiteId)}
+                  className="text-red-800 font-medium underline cursor-pointer shrink-0"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : discovered.length === 0 ? (
+              <div className="p-4 text-xs text-slate-500">
+                No recent articles within {state.settings.run.lookback_days}d lookback — click{" "}
+                <strong className="font-semibold text-slate-700">Generate Real Post & Thumbnail</strong>{" "}
+                above to automatically scan historical entries (365d fallback) or extract live metadata from the website.
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                {discovered.map((art) => {
+                  const isSelected = activeArticle?.key === art.key;
+                  const pubDate = art.published
+                    ? new Date(art.published * 1000).toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })
+                    : "Undated";
+                  return (
+                    <div
+                      key={art.key}
+                      className={`px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-colors ${
+                        isSelected ? "bg-blue-50/60" : "hover:bg-slate-50"
+                      }`}
                     >
-                      {gravatarProfile.profile_url}
-                    </a>
-                    {gravatarProfile.verified_accounts.length > 0 && (
-                      <>
-                        <span className="text-slate-300">·</span>
-                        <span>
-                          Verified: {gravatarProfile.verified_accounts.map((a) => a.label).join(", ")}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </div>
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-slate-900 truncate">{art.title}</div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                          <span className="font-mono tabular-nums">{pubDate}</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="truncate max-w-md">{art.url}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleGenerateFirstPost(art.url)}
+                        disabled={generatingFirst || preparing}
+                        className={`inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          isSelected
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        }`}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>{isSelected && copyDeck ? "Selected Draft" : "Generate Post & PNG"}</span>
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
-        ) : (
-          <>
-            {/* Fetch arbitrary URL bar */}
-            <div className="flex flex-col sm:flex-row gap-2.5 pt-2 border-t border-slate-100">
-              <input
-                type="url"
-                value={customUrl}
-                onChange={(e) => setCustomUrl(e.target.value)}
-                placeholder="Paste any live article URL (https://...) to scrape title, description & og:image"
-                className="flex-1 h-10 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <button
-                onClick={handleFetchUrl}
-                disabled={fetchingUrl || !customUrl.trim()}
-                className="inline-flex items-center justify-center gap-2 h-10 px-4 text-sm font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                {fetchingUrl ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                <span>Fetch & Prepare URL</span>
-              </button>
-            </div>
-
-            {/* Discovered articles list */}
-            <div className="border border-slate-200 rounded-lg overflow-hidden">
-              <div className="bg-slate-50 px-4 py-2.5 border-b border-slate-200 flex items-center justify-between text-xs font-medium text-slate-600">
-                <span>Discovered Articles ({discovered.length})</span>
-                <span className="font-mono text-slate-400">Lookback: {state.settings.run.lookback_days}d</span>
-              </div>
-              {discovering && discovered.length === 0 ? (
-                <div className="p-6 text-sm text-slate-500 flex items-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Fetching RSS / Atom / Sitemap entries...</span>
-                </div>
-              ) : discovered.length === 0 ? (
-                <div className="p-6 text-sm text-slate-500">
-                  {state.sites.length === 0
-                    ? "No RSS/Atom or sitemap sites configured yet. Add a site in Sites & Feeds, paste a live article URL above, or switch to Gravatar Profile."
-                    : "No recent items found for this site within the lookback window. Try increasing Lookback Days in Writer & Media or paste a direct URL above."}
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {discovered.map((art) => {
-                    const isSelected = activeArticle?.key === art.key;
-                    const pubDate = art.published
-                      ? new Date(art.published * 1000).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        })
-                      : "Undated";
-                    return (
-                      <div
-                        key={art.key}
-                        className={`px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
-                          isSelected ? "bg-blue-50/60" : "hover:bg-slate-50"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-slate-900 truncate">{art.title}</div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                            <span className="font-mono tabular-nums">{pubDate}</span>
-                            <span aria-hidden="true">·</span>
-                            <span className="truncate max-w-md">{art.url}</span>
-                            {art.tags.length > 0 && (
-                              <>
-                                <span aria-hidden="true">·</span>
-                                <span>{art.tags.slice(0, 3).join(", ")}</span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handlePrepare(selectedSiteId, art)}
-                          disabled={preparing}
-                          className={`inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                            isSelected
-                              ? "bg-blue-600 text-white"
-                              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                          }`}
-                        >
-                          {preparing && isSelected ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-3.5 h-3.5" />
-                          )}
-                          <span>{isSelected && copyDeck ? "Regenerate Deck" : "Generate Deck & PNG"}</span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </>
         )}
 
-        {/* Prepared Workspace (Thumbnail + 11 Platform Copy Deck) */}
-        {preparing && !copyDeck && (
+        {/* Only expose direct URL fetch if user explicitly unlocked Gravatar-only mode */}
+        {!gravatarOnly && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleFetchUrl();
+            }}
+            className="flex flex-col sm:flex-row gap-2.5"
+          >
+            <input
+              type="text"
+              inputMode="url"
+              value={customUrl}
+              onChange={(e) => setCustomUrl(e.target.value)}
+              placeholder="Optional direct article URL (Gravatar-only mode is disabled in Writer & Schedule)"
+              className="flex-1 h-9 px-3.5 text-sm bg-white border border-slate-300 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              type="submit"
+              disabled={fetchingUrl || !customUrl.trim()}
+              className="inline-flex items-center justify-center gap-2 h-9 px-4 text-xs font-medium text-white bg-slate-800 hover:bg-slate-900 disabled:opacity-50 rounded-lg whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {fetchingUrl ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              <span>Fetch & Generate</span>
+            </button>
+          </form>
+        )}
+
+        {(generatingFirst || preparing) && !copyDeck && (
           <div className="py-10 flex items-center justify-center gap-3 text-sm text-slate-500">
             <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-            <span>Writing 14-field caption deck and rendering 1200×630 PNG thumbnail...</span>
+            <span>Generating real social captions and rendering 1200×630 PNG thumbnail...</span>
           </div>
         )}
 
         {activeArticle && copyDeck && (
           <div className="pt-4 border-t border-slate-200 space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs font-medium text-slate-500">
-                  Prepared Deck · Writer: {writerUsed === "gemini" ? "Gemini AI" : "Rule-based formatter"} · Key{" "}
+                  Generated Staged Post · Site: {activeSite?.name || activeArticle.site} · Writer:{" "}
+                  {writerUsed === "gemini" ? "Gemini AI" : "Rule-based formatter"} · Key{" "}
                   <span className="font-mono">{activeArticle.key}</span>
                 </div>
-                <h3 className="mt-0.5 text-base font-semibold text-slate-900">{activeArticle.title}</h3>
+                <h3 className="mt-0.5 text-base font-semibold text-slate-900 truncate">
+                  {activeArticle.title}
+                </h3>
               </div>
-              <a
-                href={activeArticle.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline whitespace-nowrap shrink-0"
-              >
-                <span>Open source article</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
+
+              <div className="flex items-center gap-3 shrink-0">
+                <a
+                  href={activeArticle.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:underline whitespace-nowrap"
+                >
+                  <span>Open website article</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+                {state.stagedPost && (
+                  <button
+                    type="button"
+                    onClick={handleClearStaged}
+                    className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-red-600 cursor-pointer"
+                    title="Clear saved staged post"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Clear Draft</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              {/* Left 5 cols: Real 1200x630 Thumbnail Preview & Hook Controls */}
+              {/* Left 5 cols: Real 1200x630 Thumbnail & Hook */}
               <div className="lg:col-span-5 space-y-4">
-                <div className="bg-slate-900 rounded-lg overflow-hidden aspect-[1200/630] flex items-center justify-center relative">
+                <div className="bg-slate-900 rounded-lg overflow-hidden aspect-[1200/630] flex items-center justify-center relative border border-slate-200">
                   <AuthImage
                     filename={imageFilename}
                     rev={thumbRev}
@@ -885,7 +962,9 @@ export function PipelineView({
                 <div className="space-y-3">
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-medium text-slate-700">Thumbnail Hook Headline</label>
+                      <label className="text-xs font-medium text-slate-700">
+                        Thumbnail Hook Headline
+                      </label>
                       <span
                         className={`text-xs font-mono tabular-nums ${
                           copyDeck.hook.length > 90 ? "text-red-600 font-semibold" : "text-slate-400"
@@ -925,11 +1004,16 @@ export function PipelineView({
 
                   <div className="flex flex-wrap items-center gap-2.5 pt-1">
                     <button
+                      type="button"
                       onClick={handleRerenderThumbnail}
                       disabled={rerendering}
                       className="inline-flex items-center gap-1.5 h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                     >
-                      {rerendering ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                      {rerendering ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-3.5 h-3.5" />
+                      )}
                       <span>Re-render 1200×630 PNG</span>
                     </button>
                     {imageFilename && (
@@ -946,26 +1030,33 @@ export function PipelineView({
                 </div>
               </div>
 
-              {/* Right 7 cols: Platform Captions & Publish Targets */}
+              {/* Right 7 cols: 11 Platform Captions & Publish Targets */}
               <div className="lg:col-span-7 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
                   <div className="text-xs font-medium text-slate-600">
-                    Select platforms & customize generated captions ({selectedPlatforms.length} selected)
+                    Customize & select platforms ({selectedPlatforms.length} selected)
                   </div>
                   <div className="flex items-center gap-3 text-xs">
                     <button
-                      onClick={() => setSelectedPlatforms(state.platforms.filter((p) => p.ready).map((p) => p.name))}
+                      type="button"
+                      onClick={() =>
+                        setSelectedPlatforms(
+                          state.platforms.filter((p) => p.ready).map((p) => p.name)
+                        )
+                      }
                       className="text-blue-600 hover:underline cursor-pointer"
                     >
                       Select Ready
                     </button>
                     <button
+                      type="button"
                       onClick={() => setSelectedPlatforms(state.platforms.map((p) => p.name))}
                       className="text-slate-600 hover:underline cursor-pointer"
                     >
                       Select All
                     </button>
                     <button
+                      type="button"
                       onClick={() => setSelectedPlatforms([])}
                       className="text-slate-500 hover:underline cursor-pointer"
                     >
@@ -974,11 +1065,14 @@ export function PipelineView({
                   </div>
                 </div>
 
-                <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
+                <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
                   {PLATFORM_COPY_FIELDS.map((field) => {
                     const pInfo = state.platforms.find((p) => p.name === field.platform);
                     const isChecked = selectedPlatforms.includes(field.platform);
-                    const value = String(copyDeck[field.key] || "");
+                    const value =
+                      field.key === "pinterest"
+                        ? String(copyDeck.pinterest ?? copyDeck.facebook_page ?? "")
+                        : String(copyDeck[field.key] || "");
                     const over = value.length > field.limit;
 
                     return (
@@ -1016,9 +1110,9 @@ export function PipelineView({
                               {value.length} / {field.limit}
                             </span>
                             <button
+                              type="button"
                               onClick={() => handleCopyText(field.platform, value)}
                               className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-900 cursor-pointer"
-                              title="Copy caption"
                             >
                               {copiedKey === field.platform ? (
                                 <>
@@ -1045,7 +1139,9 @@ export function PipelineView({
                         {field.extraKey && (
                           <div className="mt-2.5">
                             <div className="flex items-center justify-between mb-1">
-                              <span className="text-xs font-medium text-slate-500">{field.extraLabel}</span>
+                              <span className="text-xs font-medium text-slate-500">
+                                {field.extraLabel}
+                              </span>
                               <span className="text-xs font-mono tabular-nums text-slate-400">
                                 {String(copyDeck[field.extraKey] || "").length} chars
                               </span>
@@ -1065,29 +1161,36 @@ export function PipelineView({
                   })}
                 </div>
 
-                {/* Publish Controls */}
+                {/* Publish Generated Post Controls */}
                 <div className="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-end gap-3">
                   <button
+                    type="button"
                     onClick={() => handlePublishComposer("dry")}
                     disabled={publishingComposer || selectedPlatforms.length === 0}
                     className="inline-flex items-center gap-2 h-10 px-4 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                   >
-                    {publishingComposer ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                    <span>Record Dry Preview</span>
+                    {publishingComposer ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4" />
+                    )}
+                    <span>Save Dry Preview</span>
                   </button>
 
                   {!confirmLiveComposer ? (
                     <button
+                      type="button"
                       onClick={() => setConfirmLiveComposer(true)}
                       disabled={publishingComposer || selectedPlatforms.length === 0}
                       className="inline-flex items-center gap-2 h-10 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                     >
                       <Send className="w-4 h-4" />
-                      <span>Publish Live to Selected ({selectedPlatforms.length})</span>
+                      <span>Publish Generated Post Live ({selectedPlatforms.length})</span>
                     </button>
                   ) : (
                     <div className="flex items-center gap-2">
                       <button
+                        type="button"
                         onClick={() => handlePublishComposer("live")}
                         disabled={publishingComposer}
                         className="inline-flex items-center gap-2 h-10 px-4 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
@@ -1100,6 +1203,7 @@ export function PipelineView({
                         <span>Confirm Live Publish</span>
                       </button>
                       <button
+                        type="button"
                         onClick={() => setConfirmLiveComposer(false)}
                         className="h-10 px-3 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
                       >
@@ -1112,6 +1216,307 @@ export function PipelineView({
             </div>
           </div>
         )}
+      </section>
+
+      {/* STEP 3: Automatic Social Platform Posting System */}
+      <section className="bg-white border border-slate-200 rounded-xl p-5 sm:p-6 space-y-5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div>
+            <div className="text-xs font-mono uppercase tracking-wider text-blue-600 font-semibold">
+              Step 03 · Automatic Background Scheduler
+            </div>
+            <h2 className="mt-0.5 text-base font-semibold text-slate-900">
+              Automatic Social Posting System
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Re-syncs Gravatar websites, generates real captions + 1200×630 PNG thumbnails for unread articles, and posts automatically on your schedule.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate?.("platforms")}
+            className="inline-flex items-center gap-2 h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            <span>Configure Platform Keys ({readyPlatformsCount}/11 Ready)</span>
+          </button>
+        </div>
+
+        {/* Platform readiness compact grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+          {state.platforms.map((p) => (
+            <button
+              key={p.name}
+              type="button"
+              onClick={() => onNavigate?.("platforms")}
+              className={`text-left px-3 py-2 rounded-lg border text-xs transition-colors cursor-pointer ${
+                p.enabled && p.ready
+                  ? "border-emerald-200 bg-emerald-50/40 text-slate-900"
+                  : p.enabled
+                  ? "border-amber-200 bg-amber-50/30 text-slate-700"
+                  : "border-slate-200 bg-slate-50 text-slate-400"
+              }`}
+            >
+              <div className="font-semibold truncate">{p.label}</div>
+              <div
+                className={`mt-0.5 font-mono text-[11px] truncate ${
+                  p.enabled && p.ready
+                    ? "text-emerald-700"
+                    : p.enabled
+                    ? "text-amber-700"
+                    : "text-slate-400"
+                }`}
+              >
+                {p.enabled && p.ready ? "API Ready" : p.enabled ? "Needs Keys" : "Disabled"}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Scheduler settings row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Cadence</label>
+            <select
+              value={schedDraft.frequency}
+              onChange={(e) =>
+                setSchedDraft({
+                  ...schedDraft,
+                  frequency: e.target.value as ScheduleSettings["frequency"],
+                })
+              }
+              className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="daily">Daily (1× per day)</option>
+              <option value="every_12h">Every 12 hours</option>
+              <option value="every_6h">Every 6 hours</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Post Time</label>
+            <input
+              type="time"
+              value={schedDraft.post_time}
+              onChange={(e) => setSchedDraft({ ...schedDraft, post_time: e.target.value })}
+              disabled={schedDraft.frequency !== "daily"}
+              className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg font-mono tabular-nums disabled:opacity-50"
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-slate-700">Timezone (IANA)</label>
+              <button
+                type="button"
+                onClick={() => {
+                  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+                  setSchedDraft({ ...schedDraft, timezone: tz });
+                }}
+                className="text-[11px] text-blue-600 hover:underline cursor-pointer"
+              >
+                Use local
+              </button>
+            </div>
+            <input
+              type="text"
+              value={schedDraft.timezone}
+              onChange={(e) => setSchedDraft({ ...schedDraft, timezone: e.target.value })}
+              className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg font-mono"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-700 mb-1">Auto-Post Mode</label>
+            <select
+              value={schedDraft.mode}
+              onChange={(e) =>
+                setSchedDraft({
+                  ...schedDraft,
+                  mode: e.target.value as ScheduleSettings["mode"],
+                })
+              }
+              className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg"
+            >
+              <option value="live">Live Publish (Connected APIs)</option>
+              <option value="dry">Dry Preview (Safe mode)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pt-3 border-t border-slate-100">
+          <div className="space-y-1.5">
+            <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={schedDraft.sync_gravatar}
+                onChange={(e) => setSchedDraft({ ...schedDraft, sync_gravatar: e.target.checked })}
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>Re-sync Gravatar-included websites before every scheduled run</span>
+            </label>
+
+            <label className="flex items-center gap-2 text-xs text-slate-800 font-medium cursor-pointer">
+              <input
+                type="checkbox"
+                checked={schedDraft.gravatar_only !== false}
+                onChange={(e) => setSchedDraft({ ...schedDraft, gravatar_only: e.target.checked })}
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>Enforce Gravatar-Only websites (block non-Gravatar sources)</span>
+            </label>
+
+            <div className="text-xs text-slate-500 font-mono tabular-nums pt-0.5">
+              Next run:{" "}
+              {state.schedule.enabled && state.schedule.next_run_at
+                ? new Date(state.schedule.next_run_at * 1000).toLocaleString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "Paused"}
+              {" · "}
+              Last status: {state.schedule.last_status}
+              {state.schedule.last_error ? ` (${state.schedule.last_error})` : ""}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleSaveAutomation(!state.schedule.enabled)}
+              disabled={savingSchedule}
+              className={`inline-flex items-center gap-2 h-9 px-4 text-xs font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                state.schedule.enabled
+                  ? "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+                  : "bg-emerald-600 text-white hover:bg-emerald-700"
+              }`}
+            >
+              {savingSchedule && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              <span>
+                {state.schedule.enabled ? "Pause Automatic Posting" : "Activate Automatic Posting"}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSaveAutomation(state.schedule.enabled)}
+              disabled={savingSchedule}
+              className="h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Save Schedule
+            </button>
+
+            <button
+              type="button"
+              onClick={handleRunDailyCycleNow}
+              disabled={runningAutoCycle}
+              className="inline-flex items-center gap-2 h-9 px-4 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              {runningAutoCycle ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5" />
+              )}
+              <span>{runningAutoCycle ? "Running Cycle..." : "Run Auto-Cycle Now"}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Manual Batch Sweeper scoped to eligible Gravatar sites */}
+        <div className="pt-4 border-t border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="text-xs font-medium text-slate-600">
+            Batch Sweep ({gravatarOnly ? "Gravatar-Included Websites Only" : "All Active Websites"})
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <select
+              value={batchSiteId}
+              onChange={(e) => setBatchSiteId(e.target.value)}
+              className="h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">All eligible websites ({enabledEligibleSites.length})</option>
+              {eligibleSites.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={batchMode}
+              onChange={(e) => {
+                setBatchMode(e.target.value as "preview-all" | "dry" | "live");
+                setConfirmLiveBatch(false);
+              }}
+              className="h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="preview-all">Preview All Enabled (no keys needed)</option>
+              <option value="dry">Dry Run (credentialed only)</option>
+              <option value="live">Live Publish (real APIs)</option>
+            </select>
+
+            <label className="inline-flex items-center gap-2 px-2.5 h-9 text-xs font-medium text-slate-600 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={ignoreLedger}
+                onChange={(e) => setIgnoreLedger(e.target.checked)}
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span>Re-run seen items</span>
+            </label>
+
+            {batchMode === "live" && !confirmLiveBatch ? (
+              <button
+                type="button"
+                onClick={() => setConfirmLiveBatch(true)}
+                disabled={runningBatch || enabledEligibleSites.length === 0}
+                className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Publish Live</span>
+              </button>
+            ) : batchMode === "live" && confirmLiveBatch ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleRunBatch}
+                  disabled={runningBatch || enabledEligibleSites.length === 0}
+                  className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  {runningBatch ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                  <span>Confirm Live Post</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmLiveBatch(false)}
+                  className="h-9 px-3 text-xs font-medium text-slate-600 hover:text-slate-900 cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleRunBatch}
+                disabled={runningBatch || enabledEligibleSites.length === 0}
+                className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                {runningBatch ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Play className="w-3.5 h-3.5" />
+                )}
+                <span>{runningBatch ? "Running..." : "Execute Run"}</span>
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Latest Run Output Report */}
@@ -1132,9 +1537,17 @@ export function PipelineView({
               </div>
               <h2 className="mt-1 text-base font-semibold text-slate-900">
                 Latest Run Results —{" "}
-                <span className="font-mono tabular-nums text-emerald-700">{latestRun.counts.ok} published</span>,{" "}
-                <span className="font-mono tabular-nums text-amber-700">{latestRun.counts.dry} previews</span>,{" "}
-                <span className="font-mono tabular-nums text-red-700">{latestRun.counts.error} errors</span>
+                <span className="font-mono tabular-nums text-emerald-700">
+                  {latestRun.counts.ok} published
+                </span>
+                ,{" "}
+                <span className="font-mono tabular-nums text-amber-700">
+                  {latestRun.counts.dry} previews
+                </span>
+                ,{" "}
+                <span className="font-mono tabular-nums text-red-700">
+                  {latestRun.counts.error} errors
+                </span>
               </h2>
             </div>
 
@@ -1172,7 +1585,12 @@ export function PipelineView({
                     <div className="text-sm font-medium text-slate-900">{item.title}</div>
                     <div className="text-xs text-slate-500 break-all">
                       {item.site} ·{" "}
-                      <a href={item.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 hover:underline"
+                      >
                         {item.url}
                       </a>
                     </div>

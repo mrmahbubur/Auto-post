@@ -149,6 +149,65 @@ async function fetchLegacyJsonProfile(id: string): Promise<Record<string, unknow
   }
 }
 
+async function fetchHtmlProfileLinks(profileUrl: string): Promise<Array<{ label: string; url: string }>> {
+  try {
+    const res = await fetch(profileUrl, {
+      headers: { "User-Agent": UA, Accept: "text/html,application/xhtml+xml" },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const matches = html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi);
+    const seen = new Map<string, { label: string; url: string; isRoot: boolean }>();
+
+    for (const m of matches) {
+      const attrs = m[1] || "";
+      if (!/card-item__link|rel=["'][^"']*\bme\b/i.test(attrs)) continue;
+      const hrefMatch = attrs.match(/href=["'](https?:\/\/[^"']+)["']/i);
+      if (!hrefMatch) continue;
+      const href = hrefMatch[1].trim();
+      if (!isWebsiteCandidateUrl(href)) continue;
+
+      const titleMatch = attrs.match(/title=["']([^"']+)["']/i);
+      const innerText = stripHtml(m[2] || "").replace(/[↗]+/g, "").trim();
+      const rawLabel = (innerText || titleMatch?.[1] || "").trim();
+      const cleanLabel = rawLabel && !/^https?:\/\//i.test(rawLabel) ? rawLabel : "";
+
+      let isRoot = false;
+      try {
+        const u = new URL(href);
+        isRoot = u.pathname === "" || u.pathname === "/";
+      } catch {
+        // ignore
+      }
+
+      const norm = href.replace(/\/+$/, "").toLowerCase();
+      const existing = seen.get(norm);
+      if (!existing || (!existing.label && cleanLabel)) {
+        seen.set(norm, { label: cleanLabel || titleMatch?.[1] || "", url: href, isRoot });
+      }
+    }
+
+    const sorted = Array.from(seen.values()).sort((a, b) => Number(b.isRoot) - Number(a.isRoot));
+    // Collapse subpath links that share the same hostname as a root website link
+    const byHost = new Map<string, { label: string; url: string }>();
+    for (const item of sorted) {
+      let hostKey = item.url.toLowerCase();
+      try {
+        hostKey = new URL(item.url).hostname.replace(/^www\./i, "").toLowerCase();
+      } catch {
+        // keep full url key
+      }
+      if (!byHost.has(hostKey)) {
+        byHost.set(hostKey, { label: item.label, url: item.url });
+      }
+    }
+    return Array.from(byHost.values());
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchGravatarProfile(rawInput: string): Promise<GravatarProfile> {
   const { candidates } = parseGravatarInput(rawInput);
 
@@ -238,12 +297,24 @@ export async function fetchGravatarProfile(rawInput: string): Promise<GravatarPr
     : Array.isArray(legacy?.urls)
     ? (legacy?.urls as Array<Record<string, unknown>>)
     : [];
-  const links = rawLinks
-    .map((l) => ({
-      label: stripHtml(String(l.label || l.title || l.value || "")),
-      url: String(l.url || l.value || ""),
-    }))
-    .filter((l) => l.url.startsWith("http"));
+  let links = rawLinks
+    .map((l) => {
+      const rawUrl = String(l.url || l.value || "").trim();
+      const normalizedUrl =
+        rawUrl && !/^https?:\/\//i.test(rawUrl) && /^[a-z0-9.-]+\.[a-z]{2,}(\/|$)/i.test(rawUrl)
+          ? `https://${rawUrl}`
+          : rawUrl;
+      return {
+        label: stripHtml(String(l.label || l.title || l.value || "")),
+        url: normalizedUrl,
+      };
+    })
+    .filter((l) => /^https?:\/\//i.test(l.url));
+
+  // Unauthenticated Gravatar JSON API often omits links even when publicly listed on the profile page
+  if (links.length === 0 && profileUrl) {
+    links = await fetchHtmlProfileLinks(profileUrl);
+  }
 
   return {
     hash,

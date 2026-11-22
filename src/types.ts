@@ -39,6 +39,7 @@ export interface CopyDeck {
   reddit_body: string;
   devto_title: string;
   devto_description: string;
+  pinterest?: string;
   hashtags: string[];
 }
 
@@ -76,11 +77,21 @@ export interface ScheduleSettings {
   timezone: string;
   mode: "live" | "dry";
   sync_gravatar: boolean;
+  gravatar_only: boolean;
   last_run_at: number | null;
   next_run_at: number | null;
   last_status: "idle" | "running" | "ok" | "error";
   last_error: string;
   last_run_id: string;
+}
+
+export interface StagedPost {
+  site: SiteConfig;
+  article: Article;
+  copy: CopyDeck;
+  image_filename: string;
+  writerUsed: "gemini" | "template";
+  generated_at: number;
 }
 
 export interface PlatformInfo {
@@ -217,6 +228,8 @@ export interface BootstrapState {
   };
   schedule: ScheduleSettings;
   gravatar: GravatarConnection;
+  stagedPost?: StagedPost | null;
+  gravatarSyncPending?: boolean;
   geminiReady: boolean;
   secretStatus: Record<string, boolean>;
   runs: RunRecord[];

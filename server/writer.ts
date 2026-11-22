@@ -45,6 +45,7 @@ Hard rules:
   - reddit_body: <=900 chars, helpful context, no marketing language, disclose it is your site
   - devto_title: <=100 chars
   - devto_description: <=140 chars
+  - pinterest: <=480 chars, visual discovery pin description with takeaway + URL
   - hashtags: array of 4 short tags without the # sign
 - Vary the angle per platform; do not paste the same sentence everywhere.`;
 }
@@ -97,6 +98,7 @@ Generate the complete 14-field JSON social copy deck following every character l
               reddit_body: { type: Type.STRING },
               devto_title: { type: Type.STRING },
               devto_description: { type: Type.STRING },
+              pinterest: { type: Type.STRING },
               hashtags: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
@@ -116,6 +118,7 @@ Generate the complete 14-field JSON social copy deck following every character l
               "reddit_body",
               "devto_title",
               "devto_description",
+              "pinterest",
               "hashtags",
             ],
           },
@@ -214,6 +217,7 @@ export function templateDeck(article: Article, site: SiteConfig): CopyDeck {
     ),
     devto_title: truncateAt(title, 95),
     devto_description: truncateAt(gist, 135),
+    pinterest: compose(`${title} — ${gist}`, url, tagsOne, 480),
     hashtags: tagList.map((t) => String(t).replace(/^#/, "")).slice(0, 4),
   };
 }
@@ -233,10 +237,14 @@ export function applySafetyBudgets(copy: Partial<CopyDeck>, article: Article): C
     reddit_body: 1000,
     devto_title: 100,
     devto_description: 140,
+    pinterest: 500,
   };
 
   const titleOnlyKeys = new Set(["reddit_title", "devto_title", "devto_description", "hook"]);
   const out: Record<string, unknown> = { ...copy };
+  if (!String(out.pinterest || "").trim() && String(out.facebook_page || "").trim()) {
+    out.pinterest = String(out.facebook_page);
+  }
 
   for (const [k, limit] of Object.entries(budgets)) {
     const val = String(out[k] || "").trim();

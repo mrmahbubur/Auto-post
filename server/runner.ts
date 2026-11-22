@@ -3,6 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import {
+  DEFAULT_AI_SETTINGS,
+  DEFAULT_MEDIA_HOST,
+  DEFAULT_RUN_SETTINGS,
+  DEFAULT_THUMB_SETTINGS,
   getSetting,
   listPlatformStates,
   listSites,
@@ -41,6 +45,7 @@ export interface RunOptions {
   platform?: string;
   limit?: number;
   ignoreLedger?: boolean;
+  gravatarOnly?: boolean;
 }
 
 export async function runPipeline(options: RunOptions): Promise<RunRecord> {
@@ -48,56 +53,33 @@ export async function runPipeline(options: RunOptions): Promise<RunRecord> {
   const t0 = Date.now();
   const started = new Date().toISOString().replace("T", " ").slice(0, 19);
 
-  const runSettings = getSetting<RunSettings>(
-    "run",
-    {
-      dry_run: true,
-      max_per_site: 2,
-      lookback_days: 30,
-      timezone: "UTC",
-    },
-    userId
-  );
-  const aiSettings = getSetting<AiSettings>(
-    "ai",
-    {
-      enabled: true,
-      model: "gemini-3.1-flash-lite",
-      brand_voice: "",
-    },
-    userId
-  );
-  const thumbSettings = getSetting<ThumbnailSettings>(
-    "thumbnail",
-    {
-      width: 1200,
-      height: 630,
-      style: "gradient",
-      use_og_image: true,
-    },
-    userId
-  );
-  const mediaSettings = getSetting<MediaHostSettings>(
-    "media_host",
-    {
-      provider: "app_url",
-      repo: "",
-      branch: "main",
-      path_prefix: "autopost",
-    },
-    userId
-  );
+  const runSettings = getSetting<RunSettings>("run", DEFAULT_RUN_SETTINGS, userId);
+  const aiSettings = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
+  const thumbSettings = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
+  const mediaSettings = getSetting<MediaHostSettings>("media_host", DEFAULT_MEDIA_HOST, userId);
   const gravatarConn = getSetting<GravatarConnection | null>("gravatar", null, userId);
+  const scheduleSettings = getSetting<{ gravatar_only?: boolean }>("schedule", {}, userId);
+  const enforceGravatarOnly =
+    typeof options.gravatarOnly === "boolean"
+      ? options.gravatarOnly
+      : scheduleSettings.gravatar_only !== false;
 
   const forceAll = options.mode === "preview-all";
   const isLive = options.mode === "live";
 
   let sites = listSites(userId).filter((s) => s.enabled);
+  if (enforceGravatarOnly) {
+    sites = sites.filter((s) => s.source === "gravatar");
+  }
   if (options.siteId) {
     sites = sites.filter((s) => s.id === options.siteId);
   }
   if (sites.length === 0) {
-    throw new Error("No enabled sites configured.");
+    throw new Error(
+      enforceGravatarOnly
+        ? "No Gravatar-included websites are active. Connect a Gravatar profile with linked websites in Step 1 first."
+        : "No enabled sites configured."
+    );
   }
 
   let activePlats = listPlatformStates(userId).filter((p) => p.enabled && (forceAll || p.ready));
@@ -262,26 +244,8 @@ export async function publishPreparedArticle(params: {
   const { userId, article, site, copy, platformNames, mode, avatarUrl } = params;
   const isLive = mode === "live";
 
-  const thumbSettings = getSetting<ThumbnailSettings>(
-    "thumbnail",
-    {
-      width: 1200,
-      height: 630,
-      style: "gradient",
-      use_og_image: true,
-    },
-    userId
-  );
-  const mediaSettings = getSetting<MediaHostSettings>(
-    "media_host",
-    {
-      provider: "app_url",
-      repo: "",
-      branch: "main",
-      path_prefix: "autopost",
-    },
-    userId
-  );
+  const thumbSettings = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
+  const mediaSettings = getSetting<MediaHostSettings>("media_host", DEFAULT_MEDIA_HOST, userId);
 
   // Always rebuild thumbnail to reflect any edited hook/hashtags
   const thumb = await buildThumbnail(article, copy, site, thumbSettings, {
@@ -493,45 +457,10 @@ export function renderStandaloneReportHtml(run: RunRecord, userId?: string): str
 }
 
 export function exportConfigYaml(userId: string): string {
-  const run = getSetting<RunSettings>(
-    "run",
-    {
-      dry_run: true,
-      max_per_site: 2,
-      lookback_days: 30,
-      timezone: "UTC",
-    },
-    userId
-  );
-  const ai = getSetting<AiSettings>(
-    "ai",
-    {
-      enabled: true,
-      model: "gemini-4-hydrogen",
-      brand_voice: "",
-    },
-    userId
-  );
-  const thumbnail = getSetting<ThumbnailSettings>(
-    "thumbnail",
-    {
-      width: 1200,
-      height: 630,
-      style: "gradient",
-      use_og_image: false,
-    },
-    userId
-  );
-  const media_host = getSetting<MediaHostSettings>(
-    "media_host",
-    {
-      provider: "none",
-      repo: "",
-      branch: "main",
-      path_prefix: "autopost",
-    },
-    userId
-  );
+  const run = getSetting<RunSettings>("run", DEFAULT_RUN_SETTINGS, userId);
+  const ai = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
+  const thumbnail = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
+  const media_host = getSetting<MediaHostSettings>("media_host", DEFAULT_MEDIA_HOST, userId);
   const sites = listSites(userId).map((s) => ({
     name: s.name,
     url: s.url,

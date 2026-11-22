@@ -184,7 +184,7 @@ export async function enrichFromPage(art: Article): Promise<Article> {
       for (const pat of patterns) {
         const m = html.match(pat);
         if (m?.[1]) {
-          image = decodeHtmlEntities(m[1]).trim();
+          image = resolveRelativeUrl(art.url, m[1]) || decodeHtmlEntities(m[1]).trim();
           break;
         }
       }
@@ -258,17 +258,21 @@ export async function discoverUrl(url: string, site: SiteConfig): Promise<Articl
       const html = (await res.text()).slice(0, 400_000);
       const ogTitle =
         html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i)?.[1] ||
         html.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1];
       if (ogTitle) art.title = stripHtml(ogTitle, 180);
 
       const ogDesc =
-        html.match(/<meta[^>]+(?:name|property)=["'](?:og:)?description["'][^>]+content=["']([^"']+)["']/i)?.[1];
+        html.match(/<meta[^>]+(?:name|property)=["'](?:og:)?description["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:og:)?description["']/i)?.[1];
       if (ogDesc) art.summary = stripHtml(ogDesc, 600);
 
       const ogImg =
         html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
-        html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)?.[1];
-      if (ogImg) art.image = decodeHtmlEntities(ogImg);
+        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i)?.[1] ||
+        html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i)?.[1];
+      if (ogImg) art.image = resolveRelativeUrl(url, ogImg) || decodeHtmlEntities(ogImg);
     }
   } catch {
     // Keep URL fallback

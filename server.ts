@@ -19,6 +19,10 @@ import {
   verifyPassword,
 } from "./server/auth.ts";
 import {
+  DEFAULT_AI_SETTINGS,
+  DEFAULT_MEDIA_HOST,
+  DEFAULT_RUN_SETTINGS,
+  DEFAULT_THUMB_SETTINGS,
   clearAllLedger,
   clearLedgerKey,
   countActiveSessionsForUser,
@@ -48,6 +52,7 @@ import {
   updateUserLoginTime,
   updateUserPasswordHash,
   upsertSite,
+  wasPosted,
 } from "./server/db.ts";
 import { fetchGravatarProfile, gravatarToArticleAndSite } from "./server/gravatar.ts";
 import { setDetectedAppUrl, verifyMediaSignature } from "./server/mediaHost.ts";
@@ -62,11 +67,14 @@ import {
   executeAutoPostCycle,
   getUserGravatarConnection,
   getUserSchedule,
+  isInitialGravatarSyncInFlight,
   saveUserSchedule,
+  setInitialGravatarSyncInFlight,
   startDailyScheduler,
   syncGravatarForUser,
 } from "./server/scheduler.ts";
-import { discover, discoverUrl, enrichFromPage } from "./server/sources.ts";
+import { verifyPlatformCredentials } from "./server/publishers.ts";
+import { discover, discoverUrl, enrichFromPage, probeWebsiteFeed } from "./server/sources.ts";
 import { buildThumbnail } from "./server/thumb.ts";
 import type {
   AiSettings,
@@ -77,6 +85,7 @@ import type {
   RunSettings,
   ScheduleSettings,
   SiteConfig,
+  StagedPost,
   ThumbnailSettings,
 } from "./server/types.ts";
 import { IMAGES_DIR, ROOT } from "./server/util.ts";
@@ -141,47 +150,13 @@ function buildBootstrapPayload(user: PublicUser) {
     missing_env: p.missing_env,
   }));
 
-  const run = getSetting<RunSettings>(
-    "run",
-    {
-      dry_run: true,
-      max_per_site: 2,
-      lookback_days: 30,
-      timezone: "UTC",
-    },
-    userId
-  );
-  const ai = getSetting<AiSettings>(
-    "ai",
-    {
-      enabled: true,
-      model: "gemini-3.1-flash-lite",
-      brand_voice: "",
-    },
-    userId
-  );
-  const thumbnail = getSetting<ThumbnailSettings>(
-    "thumbnail",
-    {
-      width: 1200,
-      height: 630,
-      style: "gradient",
-      use_og_image: true,
-    },
-    userId
-  );
-  const media_host = getSetting<MediaHostSettings>(
-    "media_host",
-    {
-      provider: "app_url",
-      repo: "",
-      branch: "main",
-      path_prefix: "autopost",
-    },
-    userId
-  );
+  const run = getSetting<RunSettings>("run", DEFAULT_RUN_SETTINGS, userId);
+  const ai = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
+  const thumbnail = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
+  const media_host = getSetting<MediaHostSettings>("media_host", DEFAULT_MEDIA_HOST, userId);
   const schedule = getUserSchedule(userId);
   const gravatar = getUserGravatarConnection(userId);
+  const stagedPost = getSetting<StagedPost | null>("staged_post", null, userId);
 
   return {
     user,
@@ -195,6 +170,8 @@ function buildBootstrapPayload(user: PublicUser) {
     settings: { run, ai, thumbnail, media_host },
     schedule,
     gravatar,
+    stagedPost,
+    gravatarSyncPending: isInitialGravatarSyncInFlight(userId),
     geminiReady: hasGeminiKeyConfigured(),
     secretStatus: getSecretStatus(ALL_SECRET_KEYS, userId),
     runs: listRuns(25, userId),
@@ -299,11 +276,14 @@ async function startServer() {
       });
 
       saveUserSchedule(user.id, {});
-      // Best-effort quick Gravatar linked-site discovery from the signup email (never blocks signup > 2.5s)
-      await Promise.race([
-        syncGravatarForUser(user.id, cleanEmail, true).catch(() => null),
-        new Promise((r) => setTimeout(r, 2500)),
-      ]);
+      // Start Gravatar linked-site discovery from signup email; return after <= 2.5s and notify client via gravatarSyncPending if still completing
+      setInitialGravatarSyncInFlight(user.id, true);
+      const gravPromise = syncGravatarForUser(user.id, cleanEmail, true)
+        .catch(() => null)
+        .finally(() => {
+          setInitialGravatarSyncInFlight(user.id, false);
+        });
+      await Promise.race([gravPromise, new Promise((r) => setTimeout(r, 2500))]);
 
       const rawToken = generateSessionToken();
       createSession({
@@ -467,6 +447,21 @@ async function startServer() {
     }
   });
 
+  app.post("/api/sites/probe", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const rawUrl = String(req.body?.url || "").trim();
+      if (!rawUrl) {
+        res.status(400).json({ error: "Website URL is required to probe feeds." });
+        return;
+      }
+      const normalized = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+      const result = await probeWebsiteFeed(normalized);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : "Failed to probe website feed" });
+    }
+  });
+
   app.post("/api/sites", requireAuth, (req: AuthenticatedRequest, res) => {
     try {
       const userId = req.user!.id;
@@ -475,11 +470,13 @@ async function startServer() {
         res.status(400).json({ error: "Site name and URL are required." });
         return;
       }
+      const rawUrl = body.url.trim();
+      const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
       const saved = upsertSite(
         {
           id: body.id?.trim() || "",
           name: body.name.trim(),
-          url: body.url.trim(),
+          url: normalizedUrl,
           feed: (body.feed || "").trim(),
           sitemap: (body.sitemap || "").trim(),
           brand_color: (body.brand_color || "#1a73e8").trim(),
@@ -560,25 +557,8 @@ async function startServer() {
       }
       const sites = listSites(userId);
       const site = sites.find((s) => s.id === siteId) || sites[0] || buildAdHocSite(article.url);
-      const aiSettings = getSetting<AiSettings>(
-        "ai",
-        {
-          enabled: true,
-          model: "gemini-4-hydrogen",
-          brand_voice: "",
-        },
-        userId
-      );
-      const thumbSettings = getSetting<ThumbnailSettings>(
-        "thumbnail",
-        {
-          width: 1200,
-          height: 630,
-          style: "gradient",
-          use_og_image: true,
-        },
-        userId
-      );
+      const aiSettings = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
+      const thumbSettings = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
 
       const enriched = await enrichFromPage(article);
       const { copy, writerUsed } = await writeCopy(enriched, aiSettings, site);
@@ -608,25 +588,8 @@ async function startServer() {
       const baseSite = sites.find((s) => s.id === siteId) || sites[0];
       const { article, site } = gravatarToArticleAndSite(profile, baseSite);
 
-      const aiSettings = getSetting<AiSettings>(
-        "ai",
-        {
-          enabled: true,
-          model: "gemini-4-hydrogen",
-          brand_voice: "",
-        },
-        userId
-      );
-      const thumbSettings = getSetting<ThumbnailSettings>(
-        "thumbnail",
-        {
-          width: 1200,
-          height: 630,
-          style: "gradient",
-          use_og_image: true,
-        },
-        userId
-      );
+      const aiSettings = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
+      const thumbSettings = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
 
       const { copy, writerUsed } = await writeCopy(article, aiSettings, site);
       const thumb = await buildThumbnail(article, copy, site, thumbSettings, {
@@ -661,6 +624,105 @@ async function startServer() {
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : "Failed to sync Gravatar linked sites" });
     }
+  });
+
+  app.post("/api/gravatar/generate-first", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { identifier, siteId, articleUrl } = req.body as {
+        identifier?: string;
+        siteId?: string;
+        articleUrl?: string;
+      };
+
+      const existingConn = getUserGravatarConnection(userId);
+      let gravatarSites = listSites(userId).filter((s) => s.source === "gravatar" && s.enabled);
+
+      if (identifier?.trim() && identifier.trim() !== existingConn.identifier) {
+        await syncGravatarForUser(userId, identifier.trim(), true);
+        gravatarSites = listSites(userId).filter((s) => s.source === "gravatar" && s.enabled);
+      } else if (gravatarSites.length === 0 && (identifier?.trim() || existingConn.identifier)) {
+        await syncGravatarForUser(userId, identifier?.trim() || existingConn.identifier, true);
+        gravatarSites = listSites(userId).filter((s) => s.source === "gravatar" && s.enabled);
+      }
+
+      if (gravatarSites.length === 0) {
+        res.status(400).json({
+          error:
+            "No websites are included on this Gravatar profile yet. Add at least one website link to your Gravatar profile (or test with a Gravatar profile that includes websites such as \"beau\").",
+        });
+        return;
+      }
+
+      const targetSite =
+        (siteId ? gravatarSites.find((s) => s.id === siteId) : undefined) || gravatarSites[0];
+      if (!targetSite) {
+        res.status(400).json({ error: "Selected website is not part of the connected Gravatar profile." });
+        return;
+      }
+
+      const runSettings = getSetting<RunSettings>("run", DEFAULT_RUN_SETTINGS, userId);
+      const aiSettings = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
+      const thumbSettings = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
+
+      let discovered: Article[] = [];
+      try {
+        discovered = await discover(targetSite, runSettings.lookback_days, 10);
+        if (discovered.length === 0 && runSettings.lookback_days < 365) {
+          discovered = await discover(targetSite, 365, 10);
+        }
+      } catch (err) {
+        res.status(400).json({
+          error:
+            err instanceof Error
+              ? `Could not fetch articles from Gravatar website (${targetSite.name}): ${err.message}`
+              : "Failed to fetch articles from Gravatar website.",
+        });
+        return;
+      }
+
+      if (discovered.length === 0) {
+        discovered = [await discoverUrl(targetSite.url, targetSite)];
+      }
+
+      const activePlats = listPlatformStates(userId).filter((p) => p.enabled);
+      const chosen =
+        (articleUrl ? discovered.find((a) => a.url === articleUrl) : undefined) ||
+        discovered.find(
+          (a) => activePlats.length === 0 || !activePlats.every((p) => wasPosted(a.key, p.meta.name, false, userId))
+        ) ||
+        discovered[0];
+
+      const enriched = await enrichFromPage(chosen);
+      const { copy, writerUsed } = await writeCopy(enriched, aiSettings, targetSite);
+      const thumb = await buildThumbnail(enriched, copy, targetSite, thumbSettings, { userId });
+
+      const stagedPost: StagedPost = {
+        site: targetSite,
+        article: enriched,
+        copy,
+        image_filename: thumb.filename,
+        writerUsed,
+        generated_at: Math.floor(Date.now() / 1000),
+      };
+      setSetting("staged_post", stagedPost, userId);
+
+      res.json({
+        stagedPost,
+        availableArticles: discovered,
+        gravatarSites,
+        state: buildBootstrapPayload(req.user!),
+      });
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : "Failed to generate post and thumbnail from Gravatar website",
+      });
+    }
+  });
+
+  app.delete("/api/gravatar/staged-post", requireAuth, (req: AuthenticatedRequest, res) => {
+    setSetting("staged_post", null, req.user!.id);
+    res.json({ state: buildBootstrapPayload(req.user!) });
   });
 
   app.put("/api/schedule", requireAuth, (req: AuthenticatedRequest, res) => {
@@ -709,16 +771,7 @@ async function startServer() {
         res.status(400).json({ error: "Article and copy are required." });
         return;
       }
-      const thumbSettings = getSetting<ThumbnailSettings>(
-        "thumbnail",
-        {
-          width: 1200,
-          height: 630,
-          style: "gradient",
-          use_og_image: true,
-        },
-        userId
-      );
+      const thumbSettings = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
       const thumb = await buildThumbnail(article, copy, site, thumbSettings, {
         ...(avatarUrl ? { avatarUrl } : {}),
         userId,
@@ -743,9 +796,40 @@ async function startServer() {
         avatarUrl?: string;
       };
       const sites = listSites(userId);
+      const schedule = getUserSchedule(userId);
+      const matchedSite = siteOverride || sites.find((s) => s.id === siteId);
+      if (schedule.gravatar_only) {
+        const isGravatarSite = matchedSite?.source === "gravatar";
+        const isProfileFallback = !matchedSite && sites.some((s) => s.source === "gravatar");
+        const resolvedGravatarSite = isGravatarSite
+          ? matchedSite
+          : isProfileFallback
+          ? sites.find((s) => s.source === "gravatar")
+          : undefined;
+        if (!resolvedGravatarSite) {
+          res.status(400).json({
+            error:
+              "Gravatar-only mode is active: only websites included on your connected Gravatar profile can be published.",
+          });
+          return;
+        }
+        // Keep the article anchored to the Gravatar-included website when publishing
+        const run = await publishPreparedArticle({
+          userId,
+          article,
+          site: resolvedGravatarSite,
+          copy,
+          imageFilename: image_filename || "",
+          platformNames: platforms,
+          mode: mode === "live" ? "live" : "dry",
+          avatarUrl,
+        });
+        res.json({ run, state: buildBootstrapPayload(req.user!) });
+        return;
+      }
+
       const site =
-        siteOverride ||
-        sites.find((s) => s.id === siteId) ||
+        matchedSite ||
         sites[0] ||
         (article?.url ? buildAdHocSite(article.url) : undefined);
       if (!site || !article || !copy || !Array.isArray(platforms) || platforms.length === 0) {
@@ -771,12 +855,13 @@ async function startServer() {
   app.post("/api/runs", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const userId = req.user!.id;
-      const { mode, siteId, platform, limit, ignoreLedger } = req.body as {
+      const { mode, siteId, platform, limit, ignoreLedger, gravatarOnly } = req.body as {
         mode?: "dry" | "preview-all" | "live";
         siteId?: string;
         platform?: string;
         limit?: number;
         ignoreLedger?: boolean;
+        gravatarOnly?: boolean;
       };
       const run = await runPipeline({
         userId,
@@ -785,6 +870,7 @@ async function startServer() {
         platform: platform || undefined,
         limit: limit ? Number(limit) : undefined,
         ignoreLedger: Boolean(ignoreLedger),
+        gravatarOnly: typeof gravatarOnly === "boolean" ? gravatarOnly : undefined,
       });
       res.json({ run, state: buildBootstrapPayload(req.user!) });
     } catch (err) {
@@ -822,6 +908,21 @@ async function startServer() {
       res.json({ state: buildBootstrapPayload(req.user!) });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "Failed to update platform" });
+    }
+  });
+
+  app.post("/api/platforms/:name/verify", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const plat = listPlatformStates(userId).find((p) => p.meta.name === req.params.name);
+      if (!plat) {
+        res.status(404).json({ error: "Unknown platform" });
+        return;
+      }
+      const result = await verifyPlatformCredentials(plat.meta.name, plat.config, userId);
+      res.json({ ok: true, detail: result.detail });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : "Credential verification failed" });
     }
   });
 
@@ -944,14 +1045,24 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.join(ROOT, "dist");
-    app.use(express.static(distDir));
+    const staticDir = fs.existsSync(path.join(distDir, "index.html"))
+      ? distDir
+      : path.join(ROOT, "static-app");
+    app.use(express.static(staticDir));
     app.get("*", (_req, res) => {
-      res.sendFile(path.join(distDir, "index.html"));
+      res.sendFile(path.join(staticDir, "index.html"));
     });
   }
 
-  app.listen(3000, "0.0.0.0", () => {
-    console.log("AutoPost server running on http://0.0.0.0:3000");
+  const isAiStudioProxy = Boolean(
+    process.env.NGINX_PORT || process.env.DEFAULT_APP_PORT || process.env.CONTROL_PLANE_PORT
+  );
+  const PORT = Number(
+    process.env.AUTOPOST_PORT ||
+      (isAiStudioProxy ? process.env.DEFAULT_APP_PORT || 3000 : process.env.PORT || 3000)
+  );
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`AutoPost server running on http://0.0.0.0:${PORT}`);
     startDailyScheduler();
   });
 }

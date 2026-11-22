@@ -12,6 +12,7 @@ import type {
   RunSettings,
   ScheduleSettings,
   SiteConfig,
+  StagedPost,
   ThumbnailSettings,
 } from "./types";
 
@@ -305,6 +306,19 @@ export const api = {
 
   bootstrap: () => request<BootstrapState>("/api/bootstrap"),
 
+  probeSite: (url: string) =>
+    request<{
+      url: string;
+      title: string;
+      feed: string;
+      sitemap: string;
+      brand_color: string;
+      discovery: "rss" | "sitemap" | "page";
+    }>("/api/sites/probe", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
+
   saveSite: (site: Partial<SiteConfig>) =>
     request<{ site: SiteConfig; state: BootstrapState }>("/api/sites", {
       method: "POST",
@@ -361,6 +375,22 @@ export const api = {
       body: JSON.stringify({ identifier, autoSync }),
     }),
 
+  generateFirstPost: (payload: { identifier?: string; siteId?: string; articleUrl?: string }) =>
+    request<{
+      stagedPost: StagedPost;
+      availableArticles: Article[];
+      gravatarSites: SiteConfig[];
+      state: BootstrapState;
+    }>("/api/gravatar/generate-first", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  clearStagedPost: () =>
+    request<{ state: BootstrapState }>("/api/gravatar/staged-post", {
+      method: "DELETE",
+    }),
+
   updateSchedule: (patch: Partial<ScheduleSettings>) =>
     request<{ state: BootstrapState }>("/api/schedule", {
       method: "PUT",
@@ -409,6 +439,7 @@ export const api = {
     platform?: string;
     limit?: number;
     ignoreLedger?: boolean;
+    gravatarOnly?: boolean;
   }) =>
     request<{ run: RunRecord; state: BootstrapState }>("/api/runs", {
       method: "POST",
@@ -422,6 +453,11 @@ export const api = {
     request<{ state: BootstrapState }>(`/api/platforms/${encodeURIComponent(name)}`, {
       method: "PUT",
       body: JSON.stringify(payload),
+    }),
+
+  verifyPlatform: (name: string) =>
+    request<{ ok: boolean; detail: string }>(`/api/platforms/${encodeURIComponent(name)}/verify`, {
+      method: "POST",
     }),
 
   clearSecret: (key: string) =>

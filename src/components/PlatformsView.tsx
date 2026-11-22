@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, KeyRound, Loader2, ShieldAlert, Trash2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, KeyRound, Loader2, ShieldAlert, ShieldCheck, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { BootstrapState, PlatformInfo } from "../types";
 
@@ -30,6 +30,8 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
   const [draftConfig, setDraftConfig] = useState<Record<string, Record<string, unknown>>>({});
   const [draftSecrets, setDraftSecrets] = useState<Record<string, Record<string, string>>>({});
   const [savingName, setSavingName] = useState<string | null>(null);
+  const [verifyingName, setVerifyingName] = useState<string | null>(null);
+  const [verifyResults, setVerifyResults] = useState<Record<string, { ok: boolean; detail: string }>>({});
   const [errorMsg, setErrorMsg] = useState("");
   const [savedToast, setSavedToast] = useState<string | null>(null);
 
@@ -68,12 +70,38 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
       const res = await api.updatePlatform(p.name, { enabled, config, secrets });
       onStateChange(res.state);
       setDraftSecrets((prev) => ({ ...prev, [p.name]: {} }));
+      setDraftConfig((prev) => {
+        const next = { ...prev };
+        delete next[p.name];
+        return next;
+      });
+      setVerifyResults((prev) => {
+        const next = { ...prev };
+        delete next[p.name];
+        return next;
+      });
       setSavedToast(p.label);
       setTimeout(() => setSavedToast(null), 2000);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to save platform settings");
     } finally {
       setSavingName(null);
+    }
+  }
+
+  async function handleVerifyPlatform(p: PlatformInfo) {
+    setVerifyingName(p.name);
+    setErrorMsg("");
+    try {
+      const res = await api.verifyPlatform(p.name);
+      setVerifyResults((prev) => ({ ...prev, [p.name]: { ok: res.ok, detail: res.detail } }));
+    } catch (err) {
+      setVerifyResults((prev) => ({
+        ...prev,
+        [p.name]: { ok: false, detail: err instanceof Error ? err.message : "Verification failed" },
+      }));
+    } finally {
+      setVerifyingName(null);
     }
   }
 
@@ -279,7 +307,40 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
                     })}
                   </div>
 
-                  <div className="flex items-center justify-end gap-2 pt-1">
+                  {verifyResults[p.name] && (
+                    <div
+                      className={`flex items-start gap-2 px-3 py-2 rounded-lg text-xs border ${
+                        verifyResults[p.name].ok
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                          : "bg-red-50 border-red-200 text-red-800"
+                      }`}
+                    >
+                      {verifyResults[p.name].ok ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600" />
+                      ) : (
+                        <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-red-600" />
+                      )}
+                      <span>{verifyResults[p.name].detail}</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                    {p.ready && (
+                      <button
+                        type="button"
+                        onClick={() => handleVerifyPlatform(p)}
+                        disabled={verifyingName === p.name || savingName === p.name}
+                        className="inline-flex items-center gap-1.5 h-9 px-3.5 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50 disabled:opacity-50 rounded-lg transition-colors cursor-pointer"
+                      >
+                        {verifyingName === p.name ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                        )}
+                        <span>{verifyingName === p.name ? "Verifying..." : "Verify Credentials"}</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => handleSavePlatform(p)}

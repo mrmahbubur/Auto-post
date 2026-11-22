@@ -264,11 +264,12 @@ export async function buildThumbnail(
   <rect x="0" y="${h - 10}" width="${w}" height="10" fill="${accentCss}" />
 </svg>`;
 
+  const fontFiles = fontFilesList();
   const resvg = new Resvg(svg, {
     fitTo: { mode: "width", value: w },
     font: {
-      fontFiles: fontFilesList(),
-      loadSystemFonts: false,
+      fontFiles,
+      loadSystemFonts: fontFiles.length === 0,
       defaultFontFamily: "Noto Sans",
     },
   });

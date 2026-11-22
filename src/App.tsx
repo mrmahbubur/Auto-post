@@ -26,11 +26,11 @@ import type { Article, AuthStatus, AuthUser, BootstrapState } from "./types";
 type NavId = "pipeline" | "sites" | "platforms" | "ledger" | "settings" | "account";
 
 const NAV_ITEMS: Array<{ id: NavId; label: string; icon: typeof Layers }> = [
-  { id: "pipeline", label: "Pipeline & Composer", icon: Layers },
-  { id: "sites", label: "Sites & Feeds", icon: Globe },
+  { id: "pipeline", label: "Setup & Auto-Post", icon: Layers },
+  { id: "sites", label: "Gravatar Websites", icon: Globe },
   { id: "platforms", label: "Platforms & Keys", icon: Share2 },
   { id: "ledger", label: "Ledger & Reports", icon: History },
-  { id: "settings", label: "Writer & Media", icon: Sliders },
+  { id: "settings", label: "Writer & Schedule", icon: Sliders },
   { id: "account", label: "Account & Security", icon: Shield },
 ];
 
@@ -88,6 +88,23 @@ export default function App() {
     checkAuthAndLoad();
     return () => setUnauthorizedHandler(null);
   }, [checkAuthAndLoad]);
+
+  useEffect(() => {
+    if (!state?.gravatarSyncPending) return;
+    let active = true;
+    const timer = setTimeout(async () => {
+      try {
+        const refreshed = await api.bootstrap();
+        if (active) setState(refreshed);
+      } catch {
+        // Ignore transient poll errors
+      }
+    }, 2200);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [state?.gravatarSyncPending]);
 
   async function handleAuthenticated(_user: AuthUser) {
     await checkAuthAndLoad();
@@ -151,6 +168,10 @@ export default function App() {
   }
 
   const activeItem = NAV_ITEMS.find((n) => n.id === activeNav) || NAV_ITEMS[0];
+  const gravatarOnly = state?.schedule.gravatar_only !== false;
+  const eligibleSitesCount = state
+    ? state.sites.filter((s) => s.enabled && (!gravatarOnly || s.source === "gravatar")).length
+    : 0;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
@@ -288,10 +309,12 @@ export default function App() {
           <div className="flex items-center gap-3 shrink-0">
             <button
               onClick={handleQuickPreviewAll}
-              disabled={quickRunning || !state || state.sites.filter((s) => s.enabled).length === 0}
+              disabled={quickRunning || !state || eligibleSitesCount === 0}
               title={
-                state && state.sites.filter((s) => s.enabled).length === 0
-                  ? "Add an enabled site in Sites & Feeds first"
+                eligibleSitesCount === 0
+                  ? gravatarOnly
+                    ? "Sync a Gravatar-included website first"
+                    : "Add an enabled site in Gravatar Websites first"
                   : "Run a preview across all enabled platforms"
               }
               className="inline-flex items-center gap-2 h-9 px-4 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
@@ -325,12 +348,34 @@ export default function App() {
             </div>
           ) : state ? (
             <>
+              {loadError && (
+                <div className="mb-6 flex items-start justify-between gap-3 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl text-sm">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-600" />
+                    <span>{loadError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setLoadError("")}
+                    className="text-xs font-medium text-red-700 hover:underline shrink-0 cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+              {state.gravatarSyncPending && (
+                <div className="mb-6 flex items-center gap-2.5 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-2.5 rounded-xl text-xs font-medium">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-blue-600" />
+                  <span>Discovering linked websites and RSS feeds from your Gravatar profile...</span>
+                </div>
+              )}
               {activeNav === "pipeline" && (
                 <PipelineView
                   state={state}
                   onStateChange={setState}
                   preselectedArticle={preselectedArticle}
                   onClearPreselected={() => setPreselectedArticle(null)}
+                  onNavigate={(tab) => setActiveNav(tab)}
                 />
               )}
               {activeNav === "sites" && (

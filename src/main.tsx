@@ -35,10 +35,12 @@ class ErrorBoundary extends Component<{children: ReactNode}, ErrorBoundaryState>
   }
 }
 
-(window as unknown as { __AUTOPOST_MOUNTED__?: boolean }).__AUTOPOST_MOUNTED__ = true;
-
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>
-);
+const win = window as unknown as { __AUTOPOST_MOUNTED__?: boolean };
+if (!win.__AUTOPOST_MOUNTED__) {
+  win.__AUTOPOST_MOUNTED__ = true;
+  createRoot(document.getElementById('root')!).render(
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}

@@ -1,0 +1,82 @@
+name: Scheduled AutoPost Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Execution mode (preview-all, dry, or live)"
+        required: true
+        default: "preview-all"
+        type: choice
+        options:
+          - preview-all
+          - dry
+          - live
+      gravatar:
+        description: "Optional Gravatar username or email to discover linked sites"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  autopost:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Noto fonts for PNG thumbnails
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-core fonts-dejavu-core
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore ledger cache
+        uses: actions/cache@v4
+        with:
+          path: data/cli-ledger.json
+          key: autopost-ledger-${{ github.ref_name }}
+
+      - name: Run AutoPost CLI
+        env:
+          AUTOPOST_CONFIG_YAML: ${{ secrets.AUTOPOST_CONFIG_YAML }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
+          BSKY_APP_PASSWORD: ${{ secrets.BSKY_APP_PASSWORD }}
+          MASTODON_TOKEN: ${{ secrets.MASTODON_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DEVTO_API_KEY: ${{ secrets.DEVTO_API_KEY }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+          LINKEDIN_TOKEN: ${{ secrets.LINKEDIN_TOKEN }}
+          THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
+          PINTEREST_TOKEN: ${{ secrets.PINTEREST_TOKEN }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTOPOST_GRAVATAR: ${{ inputs.gravatar }}
+        run: |
+          if [ -z "$AUTOPOST_CONFIG_YAML" ] && [ -z "$AUTOPOST_GRAVATAR" ] && [ ! -f "config.yaml" ]; then
+            echo "Provide AUTOPOST_CONFIG_YAML secret, commit config.yaml, or pass a gravatar input."
+            exit 1
+          fi
+          node scripts/autopost-cli.ts --mode "${{ inputs.mode }}"
+
+      - name: Upload standalone report.html
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autopost-report
+          path: autopost-report.html

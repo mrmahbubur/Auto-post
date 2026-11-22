@@ -143,7 +143,7 @@ export const PLATFORM_CATALOG: PlatformMeta[] = [
   {
     name: "pinterest",
     label: "Pinterest",
-    copy_key: "facebook_page",
+    copy_key: "pinterest",
     required_env: ["PINTEREST_TOKEN"],
     supports_image: true,
     needs_public_url: true,
@@ -181,28 +181,28 @@ export const PLATFORM_CATALOG: PlatformMeta[] = [
   },
 ];
 
-const DEFAULT_RUN_SETTINGS: RunSettings = {
+export const DEFAULT_RUN_SETTINGS: RunSettings = {
   dry_run: true,
   max_per_site: 2,
   lookback_days: 30,
   timezone: "UTC",
 };
 
-const DEFAULT_AI_SETTINGS: AiSettings = {
+export const DEFAULT_AI_SETTINGS: AiSettings = {
   enabled: true,
   model: "gemini-3.1-flash-lite",
   brand_voice:
     "Direct, friendly, first-person-plural. Short sentences. No hype words, no emoji spam (max 2), no 'in today's fast-paced world', never start with 'I'm excited to announce'. Lead with the useful takeaway.",
 };
 
-const DEFAULT_THUMB_SETTINGS: ThumbnailSettings = {
+export const DEFAULT_THUMB_SETTINGS: ThumbnailSettings = {
   width: 1200,
   height: 630,
   style: "gradient",
   use_og_image: true,
 };
 
-const DEFAULT_MEDIA_HOST: MediaHostSettings = {
+export const DEFAULT_MEDIA_HOST: MediaHostSettings = {
   provider: "app_url",
   repo: "",
   branch: "main",
@@ -210,12 +210,13 @@ const DEFAULT_MEDIA_HOST: MediaHostSettings = {
 };
 
 export const DEFAULT_SCHEDULE_SETTINGS: ScheduleSettings = {
-  enabled: true,
+  enabled: false,
   frequency: "daily",
   post_time: "09:00",
   timezone: "UTC",
   mode: "live",
   sync_gravatar: true,
+  gravatar_only: true,
   last_run_at: null,
   next_run_at: null,
   last_status: "idle",
@@ -419,9 +420,13 @@ export function seedUserDefaults(db: Database.Database, userId: string, email = 
     profile: null,
   };
 
+  const initialAi: AiSettings = {
+    ...DEFAULT_AI_SETTINGS,
+    enabled: Boolean((process.env.GEMINI_API_KEY || "").trim()),
+  };
   const upsertSetting = db.prepare(`INSERT OR IGNORE INTO settings (user_id, key, value) VALUES (?, ?, ?)`);
   upsertSetting.run(userId, "run", JSON.stringify(DEFAULT_RUN_SETTINGS));
-  upsertSetting.run(userId, "ai", JSON.stringify(DEFAULT_AI_SETTINGS));
+  upsertSetting.run(userId, "ai", JSON.stringify(initialAi));
   upsertSetting.run(userId, "thumbnail", JSON.stringify(DEFAULT_THUMB_SETTINGS));
   upsertSetting.run(userId, "media_host", JSON.stringify(DEFAULT_MEDIA_HOST));
   upsertSetting.run(userId, "schedule", JSON.stringify(initialSchedule));
@@ -735,6 +740,26 @@ export function listPlatformStates(userId: string): Array<{
     const enabled = row ? Boolean(row.enabled) : false;
     const config = row ? safeJsonParse<Record<string, unknown>>(row.config, meta.default_config) : meta.default_config;
     const missing_env = meta.required_env.filter((k) => !getSecret(k, userId));
+
+    if (meta.name === "mastodon" && !String(config.instance || "").trim()) {
+      missing_env.push("instance (config)");
+    } else if (meta.name === "telegram") {
+      const chatId = String(config.chat_id || "").trim();
+      if (!chatId || chatId === "@your_channel") {
+        missing_env.push("chat_id (channel)");
+      }
+    } else if (
+      meta.name === "facebook_page" &&
+      !String(config.page_id || "").trim() &&
+      !getSecret("FB_PAGE_ID", userId)
+    ) {
+      missing_env.push("page_id (config)");
+    } else if (meta.name === "linkedin" && !String(config.author_urn || "").trim()) {
+      missing_env.push("author_urn (config)");
+    } else if (meta.name === "pinterest" && !String(config.board_id || "").trim()) {
+      missing_env.push("board_id (config)");
+    }
+
     return {
       meta,
       enabled,
