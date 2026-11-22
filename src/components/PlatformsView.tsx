@@ -22,8 +22,8 @@ const PLATFORM_CONFIG_FIELDS: Record<
   linkedin: [{ key: "author_urn", label: "Author URN", placeholder: "urn:li:person:XXXX" }],
   threads: [{ key: "user_id", label: "Threads User ID", placeholder: "me" }],
   pinterest: [
-    { key: "board_id", label: "Pinterest Board ID", placeholder: "1234567890" },
-    { key: "api_base", label: "API Base URL (optional sandbox)", placeholder: "https://api.pinterest.com" },
+    { key: "board_id", label: "Pinterest Board ID (or set PINTEREST_BOARD_ID below)", placeholder: "1234567890" },
+    { key: "api_base", label: "Custom API Base URL (optional, default api.pinterest.com)", placeholder: "https://api.pinterest.com" },
   ],
 };
 
@@ -277,19 +277,16 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {(p.name === "pinterest"
-                      ? [...p.required_env, "PINTEREST_BOARD_ID"]
-                      : p.required_env
-                    ).map((envKey) => {
+                    {[...p.required_env, ...(p.optional_env || [])].map((envKey) => {
                       const isConfigured = Boolean(state.secretStatus[envKey]);
-                      const isOptionalSecret = p.name === "pinterest" && envKey === "PINTEREST_BOARD_ID";
+                      const isOptionalSecret = (p.optional_env || []).includes(envKey);
                       return (
                         <div key={envKey}>
                           <div className="flex items-center justify-between mb-1">
                             <label className="text-xs font-medium text-slate-700 font-mono">
                               {envKey}
                               {isOptionalSecret && (
-                                <span className="ml-1.5 font-sans font-normal text-slate-400">(optional fallback)</span>
+                                <span className="ml-1.5 font-sans font-normal text-slate-400">(secret fallback)</span>
                               )}
                             </label>
                             <div className="flex items-center gap-2 text-xs">
@@ -317,7 +314,7 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
                               isConfigured
                                 ? "•••••••• (enter new value to replace)"
                                 : isOptionalSecret
-                                ? "Optional secret if board_id above is empty"
+                                ? `Optional secret (${envKey})`
                                 : `Enter ${envKey}`
                             }
                             className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"

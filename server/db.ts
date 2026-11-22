@@ -26,6 +26,7 @@ export interface PlatformMeta {
   label: string;
   copy_key: string;
   required_env: string[];
+  optional_env?: string[];
   supports_image: boolean;
   needs_public_url: boolean;
   char_limit: number;
@@ -106,6 +107,7 @@ export const PLATFORM_CATALOG: PlatformMeta[] = [
     label: "Facebook Page",
     copy_key: "facebook_page",
     required_env: ["FB_PAGE_TOKEN"],
+    optional_env: ["FB_PAGE_ID"],
     supports_image: true,
     needs_public_url: false,
     char_limit: 5000,
@@ -145,6 +147,7 @@ export const PLATFORM_CATALOG: PlatformMeta[] = [
     label: "Pinterest",
     copy_key: "pinterest",
     required_env: ["PINTEREST_TOKEN"],
+    optional_env: ["PINTEREST_BOARD_ID"],
     supports_image: true,
     needs_public_url: true,
     char_limit: 500,
@@ -761,7 +764,7 @@ export function listPlatformStates(userId: string): Array<{
       !String(config.board_id || "").trim() &&
       !getSecret("PINTEREST_BOARD_ID", userId)
     ) {
-      missing_env.push("board_id (config)");
+      missing_env.push("board_id or PINTEREST_BOARD_ID");
     }
 
     return {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   Globe,
@@ -33,6 +33,52 @@ const NAV_ITEMS: Array<{ id: NavId; label: string; icon: typeof Layers }> = [
   { id: "settings", label: "Writer & Schedule", icon: Sliders },
   { id: "account", label: "Account & Security", icon: Shield },
 ];
+
+class ViewErrorBoundary extends Component<
+  { children: ReactNode; resetKey?: string; onReset?: () => void },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error): { error: Error | null } {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("View error boundary caught error:", error, info.componentStack);
+  }
+
+  componentDidUpdate(prevProps: { resetKey?: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="bg-white border border-red-200 rounded-xl p-6 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>Something went wrong rendering this view</span>
+          </div>
+          <p className="text-xs text-slate-600 font-mono break-words">{this.state.error.message}</p>
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ error: null });
+              this.props.onReset?.();
+            }}
+            className="h-9 px-4 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+          >
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
@@ -197,21 +243,23 @@ export default function App() {
 
   if (backendMissing || !authStatus?.authenticated) {
     return (
-      <AuthScreen
-        status={
-          authStatus || {
-            authenticated: false,
-            user: null,
-            hasUsers: false,
-            allowSignups: true,
-            activeSessionsCount: 0,
+      <ViewErrorBoundary resetKey={String(backendMissing)} onReset={checkAuthAndLoad}>
+        <AuthScreen
+          status={
+            authStatus || {
+              authenticated: false,
+              user: null,
+              hasUsers: false,
+              allowSignups: true,
+              activeSessionsCount: 0,
+            }
           }
-        }
-        onAuthenticated={handleAuthenticated}
-        onServerChanged={checkAuthAndLoad}
-        backendDisconnected={backendMissing}
-        connectionError={!authStatus ? loadError : ""}
-      />
+          onAuthenticated={handleAuthenticated}
+          onServerChanged={checkAuthAndLoad}
+          backendDisconnected={backendMissing}
+          connectionError={!authStatus ? loadError : ""}
+        />
+      </ViewErrorBoundary>
     );
   }
 
@@ -417,39 +465,41 @@ export default function App() {
                   <span>Discovering linked websites and RSS feeds from your Gravatar profile...</span>
                 </div>
               )}
-              {activeNav === "pipeline" && (
-                <PipelineView
-                  state={state}
-                  onStateChange={setState}
-                  preselectedArticle={preselectedArticle}
-                  onClearPreselected={() => setPreselectedArticle(null)}
-                  onNavigate={(tab) => setActiveNav(tab)}
-                />
-              )}
-              {activeNav === "sites" && (
-                <SitesView
-                  state={state}
-                  onStateChange={setState}
-                  onOpenInComposer={handleOpenInComposer}
-                />
-              )}
-              {activeNav === "platforms" && (
-                <PlatformsView state={state} onStateChange={setState} />
-              )}
-              {activeNav === "ledger" && (
-                <LedgerView state={state} onStateChange={setState} />
-              )}
-              {activeNav === "settings" && (
-                <SettingsView state={state} onStateChange={setState} />
-              )}
-              {activeNav === "account" && (
-                <AccountView
-                  state={state}
-                  onStateChange={setState}
-                  onSignedOut={handleSignOut}
-                  onServerChanged={checkAuthAndLoad}
-                />
-              )}
+              <ViewErrorBoundary resetKey={activeNav} onReset={checkAuthAndLoad}>
+                {activeNav === "pipeline" && (
+                  <PipelineView
+                    state={state}
+                    onStateChange={setState}
+                    preselectedArticle={preselectedArticle}
+                    onClearPreselected={() => setPreselectedArticle(null)}
+                    onNavigate={(tab) => setActiveNav(tab)}
+                  />
+                )}
+                {activeNav === "sites" && (
+                  <SitesView
+                    state={state}
+                    onStateChange={setState}
+                    onOpenInComposer={handleOpenInComposer}
+                  />
+                )}
+                {activeNav === "platforms" && (
+                  <PlatformsView state={state} onStateChange={setState} />
+                )}
+                {activeNav === "ledger" && (
+                  <LedgerView state={state} onStateChange={setState} />
+                )}
+                {activeNav === "settings" && (
+                  <SettingsView state={state} onStateChange={setState} />
+                )}
+                {activeNav === "account" && (
+                  <AccountView
+                    state={state}
+                    onStateChange={setState}
+                    onSignedOut={handleSignOut}
+                    onServerChanged={checkAuthAndLoad}
+                  />
+                )}
+              </ViewErrorBoundary>
             </>
           ) : null}
         </main>

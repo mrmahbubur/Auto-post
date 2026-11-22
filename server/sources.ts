@@ -185,7 +185,7 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
   };
 }
 
-function extractImageFromEntry(entry: XmlNode, baseUrl = ""): string {
+function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): string {
   const candidates = [
     ...asNodes(entry["media:content"]),
     ...asNodes(entry["media:thumbnail"]),
@@ -203,6 +203,17 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = ""): string {
   if (itunesImg && typeof itunesImg === "object" && itunesImg["@_href"]) {
     const resolved = resolveRelativeUrl(baseUrl, String(itunesImg["@_href"]));
     if (resolved) return resolved;
+  }
+  if (rawHtmlBody) {
+    const imgTags = rawHtmlBody.match(/<img\b[^>]*>/gi) || [];
+    for (const tag of imgTags) {
+      const attrs = parseHtmlAttributes(tag);
+      const src = attrs.src || attrs["data-src"] || "";
+      if (src) {
+        const resolved = resolveRelativeUrl(baseUrl, src);
+        if (resolved) return resolved;
+      }
+    }
   }
   return "";
 }
@@ -224,6 +235,11 @@ function extractLinkFromEntry(entry: XmlNode, baseUrl = ""): string {
       const rel = String(obj["@_rel"] || "alternate").trim();
       if (href && (rel === "alternate" || !rel)) {
         const resolved = resolveRelativeUrl(baseUrl, href);
+        if (resolved) return resolved;
+      }
+      const txt = textVal(obj);
+      if (txt) {
+        const resolved = resolveRelativeUrl(baseUrl, txt);
         if (resolved) return resolved;
       }
     }
@@ -284,7 +300,7 @@ export function parseFeed(xmlText: string, siteName: string, baseUrl = ""): Arti
       title,
       url,
       summary,
-      image: extractImageFromEntry(e, url || baseUrl),
+      image: extractImageFromEntry(e, url || effectiveBase, rawDesc),
       published,
       guid,
       tags: cats,
@@ -465,8 +481,11 @@ export async function probeWebsiteFeed(rawUrl: string): Promise<ProbedSiteFeed> 
       const body = (await res.text()).slice(0, 260_000);
       const finalUrl = res.url || canonicalUrl;
 
-      // Direct XML URL passed on Gravatar
-      if (contentType.includes("xml") || /<rss[\s>]|<feed[\s>]/i.test(body.slice(0, 600))) {
+      // Direct XML feed or sitemap URL passed on Gravatar
+      if (
+        contentType.includes("xml") ||
+        /<rss[\s>]|<feed[\s>]|<rdf:RDF[\s>]/i.test(body.slice(0, 800))
+      ) {
         return {
           url: origin,
           title,
@@ -474,6 +493,16 @@ export async function probeWebsiteFeed(rawUrl: string): Promise<ProbedSiteFeed> 
           sitemap: "",
           brand_color: "",
           discovery: "rss",
+        };
+      }
+      if (/<urlset[\s>]/i.test(body.slice(0, 800))) {
+        return {
+          url: origin,
+          title,
+          feed: "",
+          sitemap: finalUrl,
+          brand_color: "",
+          discovery: "sitemap",
         };
       }
 
@@ -497,25 +526,28 @@ export async function probeWebsiteFeed(rawUrl: string): Promise<ProbedSiteFeed> 
     ...(parsedUrl.hostname.endsWith("medium.com") && parsedUrl.pathname.length > 1
       ? [`${origin}/feed${parsedUrl.pathname}`]
       : []),
-    ...(hostPathBase !== origin ? [`${hostPathBase}/feed/`, `${hostPathBase}/rss.xml`] : []),
+    ...(hostPathBase !== origin
+      ? [`${hostPathBase}/feed/`, `${hostPathBase}/rss.xml`, `${hostPathBase}/atom.xml`]
+      : []),
     `${origin}/feed/`,
     `${origin}/feed`,
     `${origin}/rss.xml`,
     `${origin}/atom.xml`,
     `${origin}/feed.xml`,
+    `${origin}/feed.atom`,
     `${origin}/index.xml`,
     `${origin}/rss`,
   ];
   for (const fp of fallbackFeedPaths) {
     if (!candidateFeeds.includes(fp)) candidateFeeds.push(fp);
   }
-  if (!candidateSitemaps.includes(`${origin}/sitemap.xml`)) {
-    candidateSitemaps.push(`${origin}/sitemap.xml`);
+  for (const smPath of [`${origin}/sitemap.xml`, `${origin}/sitemap_index.xml`]) {
+    if (!candidateSitemaps.includes(smPath)) candidateSitemaps.push(smPath);
   }
 
-  // Probe up to 6 feed candidates in parallel
+  // Probe feed candidates in parallel
   const feedChecks = await Promise.all(
-    candidateFeeds.slice(0, 6).map(async (u) => ({ url: u, kind: await verifyXmlFeedUrl(u) }))
+    candidateFeeds.slice(0, 10).map(async (u) => ({ url: u, kind: await verifyXmlFeedUrl(u) }))
   );
   const validFeed = feedChecks.find((c) => c.kind === "rss");
   if (validFeed) {
@@ -530,7 +562,7 @@ export async function probeWebsiteFeed(rawUrl: string): Promise<ProbedSiteFeed> 
   }
 
   const sitemapChecks = await Promise.all(
-    candidateSitemaps.slice(0, 2).map(async (u) => ({ url: u, kind: await verifyXmlFeedUrl(u) }))
+    candidateSitemaps.slice(0, 3).map(async (u) => ({ url: u, kind: await verifyXmlFeedUrl(u) }))
   );
   const validSitemap = sitemapChecks.find((c) => c.kind === "sitemap");
   if (validSitemap) {

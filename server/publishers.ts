@@ -818,7 +818,12 @@ export async function verifyPlatformCredentials(
         throw new Error(`Pinterest board verify failed (${res.status}): ${errBody || res.statusText}`);
       }
       const d = (await res.json()) as { name?: string };
-      return { detail: `Board "${d.name || boardId}" verified` };
+      return {
+        detail:
+          apiBase !== "https://api.pinterest.com"
+            ? `Board "${d.name || boardId}" verified (${apiBase})`
+            : `Board "${d.name || boardId}" verified`,
+      };
     }
     case "reddit": {
       const clientId = getSecret("REDDIT_CLIENT_ID", userId);

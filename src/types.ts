@@ -99,6 +99,7 @@ export interface PlatformInfo {
   label: string;
   copy_key: string;
   required_env: string[];
+  optional_env?: string[];
   supports_image: boolean;
   needs_public_url: boolean;
   char_limit: number;

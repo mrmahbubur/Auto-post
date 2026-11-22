@@ -1,32 +1,62 @@
-import {Component, type ReactNode} from 'react';
+import {Component, type ErrorInfo, type ReactNode} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallbackTitle?: string;
+}
 
 interface ErrorBoundaryState {
   error: Error | null;
 }
 
-class ErrorBoundary extends Component<{children: ReactNode}, ErrorBoundaryState> {
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error };
   }
 
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('AutoPost UI error:', error, info.componentStack);
+  }
+
   render() {
     if (this.state.error) {
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-          <div className="bg-white border border-red-200 rounded-xl p-6 max-w-md w-full space-y-3">
-            <h1 className="text-base font-semibold text-slate-900">Application Error</h1>
-            <p className="text-xs text-slate-600 font-mono break-words">{this.state.error.message}</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="h-9 px-4 text-xs font-medium text-white bg-slate-900 rounded-lg cursor-pointer"
-            >
-              Reload
-            </button>
+          <div className="bg-white border border-red-200 rounded-xl p-6 max-w-md w-full space-y-4">
+            <div className="space-y-1">
+              <h1 className="text-base font-semibold text-slate-900">
+                {this.props.fallbackTitle || 'Application Initialization Error'}
+              </h1>
+              <p className="text-xs text-slate-600 font-mono break-words">{this.state.error.message}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="h-9 px-4 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer"
+              >
+                Reload
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    localStorage.removeItem('autopost_api_base');
+                  } catch {
+                    // ignore storage errors
+                  }
+                  window.location.reload();
+                }}
+                className="h-9 px-3.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                Reset Server URL
+              </button>
+            </div>
           </div>
         </div>
       );
