@@ -186,9 +186,14 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
 }
 
 function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): string {
+  const mediaGroups = asNodes(entry["media:group"]);
   const candidates = [
     ...asNodes(entry["media:content"]),
     ...asNodes(entry["media:thumbnail"]),
+    ...mediaGroups.flatMap((g) => [
+      ...asNodes(g["media:content"]),
+      ...asNodes(g["media:thumbnail"]),
+    ]),
     ...asNodes(entry["enclosure"]),
   ];
   for (const c of candidates) {

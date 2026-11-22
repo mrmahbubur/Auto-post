@@ -831,10 +831,12 @@ export async function verifyPlatformCredentials(
         name?: string;
         privacy?: string;
         pin_count?: number;
+        follower_count?: number;
       };
       const metaParts = [
         d.privacy ? d.privacy.toLowerCase() : "",
         typeof d.pin_count === "number" ? `${d.pin_count} pins` : "",
+        typeof d.follower_count === "number" ? `${d.follower_count} followers` : "",
         apiBase !== "https://api.pinterest.com" ? apiBase : "",
       ].filter(Boolean);
       return {
