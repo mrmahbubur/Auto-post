@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   Check,
@@ -90,6 +90,14 @@ export function AuthScreen({
   const [gravLoading, setGravLoading] = useState(false);
   const [gravError, setGravError] = useState("");
   const [gravPreview, setGravPreview] = useState<PublicGravatarSummary | null>(null);
+
+  useEffect(() => {
+    if (status.hasUsers && !status.allowSignups && mode === "signup") {
+      setMode("login");
+    } else if (!status.hasUsers && mode === "login") {
+      setMode("signup");
+    }
+  }, [status.hasUsers, status.allowSignups, mode]);
 
   async function handleConnectServer(candidateUrl: string) {
     setProbeError("");

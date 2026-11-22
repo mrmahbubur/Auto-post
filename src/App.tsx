@@ -50,32 +50,39 @@ export default function App() {
   } | null>(null);
 
   const bootstrapSeqRef = useRef(0);
+  const bootstrapAbortRef = useRef<AbortController | null>(null);
   const stateRef = useRef<BootstrapState | null>(null);
   stateRef.current = state;
 
   const checkAuthAndLoad = useCallback(async () => {
     const seq = ++bootstrapSeqRef.current;
+    bootstrapAbortRef.current?.abort();
+    const controller = new AbortController();
+    bootstrapAbortRef.current = controller;
+
     if (!stateRef.current) {
       setAuthLoading(true);
     }
     setLoadError("");
     setBackendMissing(false);
     try {
-      const status = await api.getAuthStatus();
-      if (seq !== bootstrapSeqRef.current) return;
+      const status = await api.getAuthStatus(controller.signal);
+      if (seq !== bootstrapSeqRef.current || controller.signal.aborted) return;
       setAuthStatus(status);
       if (status.authenticated) {
         if (!stateRef.current) {
           setLoading(true);
         }
-        const data = await api.bootstrap();
-        if (seq !== bootstrapSeqRef.current) return;
+        const data = await api.bootstrap(controller.signal);
+        if (seq !== bootstrapSeqRef.current || controller.signal.aborted) return;
         setState(data);
       } else {
         setState(null);
       }
     } catch (err) {
-      if (seq !== bootstrapSeqRef.current) return;
+      if (seq !== bootstrapSeqRef.current || (err instanceof DOMException && err.name === "AbortError")) {
+        return;
+      }
       const msg = err instanceof Error ? err.message : "Failed to connect to AutoPost server";
       if (msg === "BACKEND_UNAVAILABLE") {
         setBackendMissing(true);
@@ -93,6 +100,7 @@ export default function App() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       bootstrapSeqRef.current += 1;
+      bootstrapAbortRef.current?.abort();
       setState(null);
       setAuthStatus((prev) =>
         prev
@@ -103,6 +111,7 @@ export default function App() {
     checkAuthAndLoad();
     return () => {
       bootstrapSeqRef.current += 1;
+      bootstrapAbortRef.current?.abort();
       setUnauthorizedHandler(null);
     };
   }, [checkAuthAndLoad]);
@@ -113,19 +122,21 @@ export default function App() {
     let polls = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const pollSeq = bootstrapSeqRef.current;
+    const pollController = new AbortController();
 
     const schedulePoll = () => {
       if (!active || polls >= 15) return;
       timer = setTimeout(async () => {
         polls += 1;
         try {
-          const refreshed = await api.bootstrap();
-          if (!active || pollSeq !== bootstrapSeqRef.current) return;
+          const refreshed = await api.bootstrap(pollController.signal);
+          if (!active || pollSeq !== bootstrapSeqRef.current || pollController.signal.aborted) return;
           setState(refreshed);
           if (refreshed.gravatarSyncPending) {
             schedulePoll();
           }
-        } catch {
+        } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
           if (active && pollSeq === bootstrapSeqRef.current) {
             schedulePoll();
           }
@@ -136,6 +147,7 @@ export default function App() {
     schedulePoll();
     return () => {
       active = false;
+      pollController.abort();
       if (timer) clearTimeout(timer);
     };
   }, [state?.gravatarSyncPending, authStatus?.authenticated]);
@@ -145,9 +157,11 @@ export default function App() {
   }
 
   async function handleSignOut() {
-    await api.logout();
+    bootstrapSeqRef.current += 1;
+    bootstrapAbortRef.current?.abort();
     setState(null);
     setActiveNav("pipeline");
+    await api.logout();
     await checkAuthAndLoad();
   }
 

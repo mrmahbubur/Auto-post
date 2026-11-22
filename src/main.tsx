@@ -43,14 +43,20 @@ const win = window as unknown as {
 
 if (!win.__AUTOPOST_MOUNTED__ && !win.__AUTOPOST_MOUNTING__) {
   win.__AUTOPOST_MOUNTING__ = true;
-  const container = document.getElementById('root');
-  if (container) {
-    win.__AUTOPOST_ROOT__ = win.__AUTOPOST_ROOT__ || createRoot(container);
-    win.__AUTOPOST_MOUNTED__ = true;
-    win.__AUTOPOST_ROOT__.render(
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    );
+  try {
+    const container = document.getElementById('root');
+    if (container) {
+      win.__AUTOPOST_ROOT__ = win.__AUTOPOST_ROOT__ || createRoot(container);
+      win.__AUTOPOST_ROOT__.render(
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
+      );
+      win.__AUTOPOST_MOUNTED__ = true;
+    }
+  } finally {
+    if (!win.__AUTOPOST_MOUNTED__) {
+      win.__AUTOPOST_MOUNTING__ = false;
+    }
   }
 }

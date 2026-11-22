@@ -279,7 +279,8 @@ async function request<T>(url: string, init?: RequestInit, skipAuthRedirect = fa
 }
 
 export const api = {
-  getAuthStatus: () => request<AuthStatus>("/api/auth/status", undefined, true),
+  getAuthStatus: (signal?: AbortSignal) =>
+    request<AuthStatus>("/api/auth/status", signal ? { signal } : undefined, true),
 
   signup: async (payload: { name: string; email: string; password: string }) => {
     const res = await request<{ token: string; user: AuthUser; hasUsers: boolean; allowSignups: boolean }>(
@@ -340,7 +341,8 @@ export const api = {
       body: JSON.stringify({ allowSignups }),
     }),
 
-  bootstrap: () => request<BootstrapState>("/api/bootstrap"),
+  bootstrap: (signal?: AbortSignal) =>
+    request<BootstrapState>("/api/bootstrap", signal ? { signal } : undefined),
 
   probeSite: (url: string) =>
     request<{

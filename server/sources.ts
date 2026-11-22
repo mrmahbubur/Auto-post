@@ -135,7 +135,12 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
       canonicalUrl = abs;
     } else if (relTokens.includes("image_src") && !imageSrcLink) {
       imageSrcLink = abs;
-    } else if (relTokens.includes("alternate") && (type.includes("rss") || type.includes("atom"))) {
+    } else if (
+      relTokens.includes("alternate") &&
+      (type.includes("rss") ||
+        type.includes("atom") ||
+        (/\bxml\b/.test(type) && /\b(rss|feed|atom)\b/i.test(`${attrs.title || ""} ${href}`)))
+    ) {
       if (!feeds.includes(abs)) feeds.push(abs);
     } else if (relTokens.includes("sitemap")) {
       if (!sitemaps.includes(abs)) sitemaps.push(abs);
@@ -248,8 +253,11 @@ export function parseFeed(xmlText: string, siteName: string, baseUrl = ""): Arti
     entries = asNodes(feed.entry);
   }
 
+  const channelLinkRaw = channel ? extractLinkFromEntry(channel, baseUrl) : "";
+  const effectiveBase = channelLinkRaw || baseUrl;
+
   return entries.map((e) => {
-    const url = extractLinkFromEntry(e, baseUrl);
+    const url = extractLinkFromEntry(e, effectiveBase);
     const title = stripHtml(textVal(e.title)) || "(untitled)";
     const rawDesc =
       textVal(e["content:encoded"]) ||

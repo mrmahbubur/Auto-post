@@ -150,8 +150,8 @@ export const PLATFORM_CATALOG: PlatformMeta[] = [
     char_limit: 500,
     effort: "Days · Standard Access",
     safety: "caution",
-    notes: "Requires pins:write scope, board_id, and a public image URL via media_host.",
-    default_config: { board_id: "" },
+    notes: "Requires pins:write scope, board_id (or PINTEREST_BOARD_ID secret), optional api_base, and a public image URL via media_host.",
+    default_config: { board_id: "", api_base: "" },
   },
   {
     name: "reddit",

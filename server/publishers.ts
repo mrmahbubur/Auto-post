@@ -597,6 +597,22 @@ async function publishThreads(
   return { url: handle ? `https://www.threads.net/@${handle}` : "", id: pData.id || "" };
 }
 
+function resolvePinterestApiBase(cfg: Record<string, unknown>): string {
+  const raw = String(cfg.api_base || "").trim();
+  if (!raw) return "https://api.pinterest.com";
+  const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(withProto);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return "https://api.pinterest.com";
+    }
+    const cleanPath = parsed.pathname.replace(/\/v5\/?$/i, "").replace(/\/+$/, "");
+    return `${parsed.origin}${cleanPath}`;
+  } catch {
+    return "https://api.pinterest.com";
+  }
+}
+
 async function publishPinterest(
   text: string,
   imageUrl: string,
@@ -609,7 +625,7 @@ async function publishPinterest(
   if (!boardId || !imageUrl) {
     throw new Error("Pinterest board_id and a public image URL (media_host) are required");
   }
-  const apiBase = String(cfg.api_base || "https://api.pinterest.com").replace(/\/+$/, "");
+  const apiBase = resolvePinterestApiBase(cfg);
   const res = await fetch(`${apiBase}/v5/pins`, {
     method: "POST",
     headers: {
@@ -791,8 +807,8 @@ export async function verifyPlatformCredentials(
     case "pinterest": {
       const boardId = String(cfg.board_id || getSecret("PINTEREST_BOARD_ID", userId) || "").trim();
       const token = getSecret("PINTEREST_TOKEN", userId);
-      if (!boardId || !token) throw new Error("Pinterest board_id and PINTEREST_TOKEN are required.");
-      const apiBase = String(cfg.api_base || "https://api.pinterest.com").replace(/\/+$/, "");
+      if (!boardId || !token) throw new Error("Pinterest board_id (or PINTEREST_BOARD_ID) and PINTEREST_TOKEN are required.");
+      const apiBase = resolvePinterestApiBase(cfg);
       const res = await fetch(`${apiBase}/v5/boards/${encodeURIComponent(boardId)}`, {
         headers: { Authorization: `Bearer ${token}`, "User-Agent": UA },
         signal: AbortSignal.timeout(15000),

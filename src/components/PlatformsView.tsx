@@ -277,12 +277,21 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {p.required_env.map((envKey) => {
+                    {(p.name === "pinterest"
+                      ? [...p.required_env, "PINTEREST_BOARD_ID"]
+                      : p.required_env
+                    ).map((envKey) => {
                       const isConfigured = Boolean(state.secretStatus[envKey]);
+                      const isOptionalSecret = p.name === "pinterest" && envKey === "PINTEREST_BOARD_ID";
                       return (
                         <div key={envKey}>
                           <div className="flex items-center justify-between mb-1">
-                            <label className="text-xs font-medium text-slate-700 font-mono">{envKey}</label>
+                            <label className="text-xs font-medium text-slate-700 font-mono">
+                              {envKey}
+                              {isOptionalSecret && (
+                                <span className="ml-1.5 font-sans font-normal text-slate-400">(optional fallback)</span>
+                              )}
+                            </label>
                             <div className="flex items-center gap-2 text-xs">
                               <span className={isConfigured ? "text-emerald-700 font-medium" : "text-slate-400"}>
                                 {isConfigured ? "Set on server" : "Not set"}
@@ -304,7 +313,13 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
                             autoComplete="new-password"
                             value={secretInputs[envKey] || ""}
                             onChange={(e) => setSecretField(p.name, envKey, e.target.value)}
-                            placeholder={isConfigured ? "•••••••• (enter new value to replace)" : `Enter ${envKey}`}
+                            placeholder={
+                              isConfigured
+                                ? "•••••••• (enter new value to replace)"
+                                : isOptionalSecret
+                                ? "Optional secret if board_id above is empty"
+                                : `Enter ${envKey}`
+                            }
                             className="w-full h-9 px-3 text-sm bg-white border border-slate-300 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
