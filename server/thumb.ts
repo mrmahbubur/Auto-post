@@ -1,6 +1,7 @@
 import { Resvg } from "@resvg/resvg-js";
 import fs from "node:fs";
 import path from "node:path";
+import sharp from "sharp";
 import type { Article, CopyDeck, SiteConfig, ThumbnailSettings } from "./types.ts";
 import { IMAGES_DIR, UA, escapeHtml, slug, stripHtml } from "./util.ts";
 
@@ -36,19 +37,60 @@ function mixRgb(
   return `rgb(${r},${g},${bl})`;
 }
 
+function sniffImageMime(buf: Buffer, headerCt: string, url: string): string {
+  if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
+    return "image/png";
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (buf.length >= 6 && (buf.subarray(0, 6).toString("ascii") === "GIF87a" || buf.subarray(0, 6).toString("ascii") === "GIF89a")) {
+    return "image/gif";
+  }
+  if (buf.length >= 12 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") {
+    return "image/webp";
+  }
+  if (buf.length >= 12 && buf.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = buf.subarray(8, 12).toString("ascii");
+    if (brand === "avif" || brand === "avis") {
+      return "image/avif";
+    }
+  }
+  const cleanCt = headerCt.split(";")[0].trim().toLowerCase();
+  if (cleanCt.startsWith("image/")) return cleanCt;
+  if (/\.avif(\?|$)/i.test(url)) return "image/avif";
+  if (/\.webp(\?|$)/i.test(url)) return "image/webp";
+  if (/\.png(\?|$)/i.test(url)) return "image/png";
+  if (/\.jpe?g(\?|$)/i.test(url)) return "image/jpeg";
+  if (/\.gif(\?|$)/i.test(url)) return "image/gif";
+  return "";
+}
+
 async function fetchOgPhotoDataUri(url: string): Promise<string | null> {
   if (!url || !url.startsWith("http")) return null;
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": UA },
+      headers: {
+        "User-Agent": UA,
+        Accept: "image/png, image/jpeg, image/gif, image/webp, image/avif;q=0.9, image/*;q=0.8",
+      },
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
     const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("image")) return null;
     const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length < 1500 || buf.length > 6_000_000) return null;
-    const mime = ct.split(";")[0].trim() || "image/jpeg";
+    if (buf.length < 150 || buf.length > 6_000_000) return null;
+
+    const mime = sniffImageMime(buf, ct, url);
+    if (!mime) return null;
+
+    // Resvg only natively decodes PNG/JPEG/GIF; transcode AVIF, WebP, SVG, or other image formats to PNG
+    if (mime !== "image/png" && mime !== "image/jpeg" && mime !== "image/gif") {
+      const pngBuf = await sharp(buf).png().toBuffer();
+      if (pngBuf.length === 0) return null;
+      return `data:image/png;base64,${pngBuf.toString("base64")}`;
+    }
+
     return `data:${mime};base64,${buf.toString("base64")}`;
   } catch {
     return null;

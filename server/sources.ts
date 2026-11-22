@@ -188,16 +188,21 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
 function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): string {
   const mediaGroups = asNodes(entry["media:group"]);
   const candidates: Array<{ node: XmlNode; isThumbnail: boolean }> = [
-    ...asNodes(entry["media:content"]).map((node) => ({ node, isThumbnail: false })),
+    // 1. Explicit thumbnail nodes take strict priority over generic media attachments
     ...asNodes(entry["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
-    ...mediaGroups.flatMap((g) => [
-      ...asNodes(g["media:content"]).map((node) => ({ node, isThumbnail: false })),
-      ...asNodes(g["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
-    ]),
+    ...mediaGroups.flatMap((g) =>
+      asNodes(g["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
+    ),
+    ...asNodes(entry["itunes:image"]).map((node) => ({ node, isThumbnail: true })),
+    // 2. Generic media content & enclosures
+    ...asNodes(entry["media:content"]).map((node) => ({ node, isThumbnail: false })),
+    ...mediaGroups.flatMap((g) =>
+      asNodes(g["media:content"]).map((node) => ({ node, isThumbnail: false }))
+    ),
     ...asNodes(entry["enclosure"]).map((node) => ({ node, isThumbnail: false })),
   ];
   for (const { node: c, isThumbnail } of candidates) {
-    const rawUrl = String(c["@_url"] || "").trim();
+    const rawUrl = String(c["@_url"] || c["@_href"] || "").trim();
     const typ = String(c["@_type"] || c["@_medium"] || "");
     if (
       rawUrl &&
@@ -206,11 +211,6 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): 
       const resolved = resolveRelativeUrl(baseUrl, rawUrl);
       if (resolved) return resolved;
     }
-  }
-  const itunesImg = entry["itunes:image"] as XmlNode | undefined;
-  if (itunesImg && typeof itunesImg === "object" && itunesImg["@_href"]) {
-    const resolved = resolveRelativeUrl(baseUrl, String(itunesImg["@_href"]));
-    if (resolved) return resolved;
   }
   if (rawHtmlBody) {
     const htmlSource = /<img\b/i.test(rawHtmlBody) ? rawHtmlBody : decodeHtmlEntities(rawHtmlBody);
