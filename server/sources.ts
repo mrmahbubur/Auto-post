@@ -187,25 +187,48 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
 
 function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): string {
   const mediaGroups = asNodes(entry["media:group"]);
-  const linkEnclosures = asNodes(entry.link).filter(
-    (l) => String(l["@_rel"] || "").toLowerCase() === "enclosure"
-  );
+  const mediaContents = asNodes(entry["media:content"]);
+  const groupMediaContents = mediaGroups.flatMap((g) => asNodes(g["media:content"]));
+  const linkNodes = asNodes(entry.link);
+  const linkEnclosures = linkNodes.filter((l) => {
+    const tokens = String(l["@_rel"] || "")
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+    return (
+      tokens.includes("enclosure") ||
+      tokens.includes("preview") ||
+      tokens.includes("thumbnail") ||
+      (tokens.includes("image") && /image/i.test(String(l["@_type"] || "")))
+    );
+  });
   const candidates: Array<{ node: unknown; isThumbnail: boolean }> = [
     // 1. Explicit thumbnail nodes take strict priority over generic media attachments
     ...toArray(entry["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
     ...mediaGroups.flatMap((g) =>
       toArray(g["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
     ),
+    ...mediaContents.flatMap((mc) =>
+      toArray(mc["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
+    ),
+    ...groupMediaContents.flatMap((mc) =>
+      toArray(mc["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
+    ),
     ...toArray(entry["itunes:image"]).map((node) => ({ node, isThumbnail: true })),
     ...toArray(entry.thumbnail).map((node) => ({ node, isThumbnail: true })),
-    // 2. Generic media content, enclosures & Atom enclosure links
-    ...toArray(entry["media:content"]).map((node) => ({ node, isThumbnail: false })),
-    ...mediaGroups.flatMap((g) =>
-      toArray(g["media:content"]).map((node) => ({ node, isThumbnail: false }))
-    ),
+    ...toArray(entry.featuredImage).map((node) => ({ node, isThumbnail: true })),
+    ...toArray(entry.featured_image).map((node) => ({ node, isThumbnail: true })),
+    ...toArray(entry.coverImage).map((node) => ({ node, isThumbnail: true })),
+    ...toArray(entry.cover_image).map((node) => ({ node, isThumbnail: true })),
+    // 2. Generic media content, enclosures, Atom enclosure links & image tags
+    ...mediaContents.map((node) => ({ node, isThumbnail: false })),
+    ...groupMediaContents.map((node) => ({ node, isThumbnail: false })),
     ...toArray(entry["enclosure"]).map((node) => ({ node, isThumbnail: false })),
     ...linkEnclosures.map((node) => ({ node, isThumbnail: false })),
+    ...toArray(entry["image:image"]).map((node) => ({ node, isThumbnail: false })),
     ...toArray(entry.image).map((node) => ({ node, isThumbnail: false })),
+    ...toArray(entry.poster).map((node) => ({ node, isThumbnail: false })),
+    ...toArray(entry.photo).map((node) => ({ node, isThumbnail: false })),
   ];
   for (const { node: rawNode, isThumbnail } of candidates) {
     let rawUrl = "";
@@ -214,19 +237,32 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): 
       rawUrl = rawNode.trim();
     } else if (rawNode && typeof rawNode === "object") {
       const c = rawNode as XmlNode;
-      rawUrl = String(c["@_url"] || c["@_href"] || textVal(c.url) || textVal(c) || "").trim();
+      rawUrl = String(
+        c["@_url"] ||
+          c["@_href"] ||
+          c["@_src"] ||
+          textVal(c.url) ||
+          textVal(c["image:loc"]) ||
+          textVal(c.loc) ||
+          textVal(c) ||
+          ""
+      ).trim();
       typ = String(c["@_type"] || c["@_medium"] || "");
     }
     if (
       rawUrl &&
-      (isThumbnail || /image/i.test(typ) || /\.(png|jpe?g|webp|avif|gif)(\?|$)/i.test(rawUrl))
+      (isThumbnail ||
+        /image/i.test(typ) ||
+        /\.(png|jpe?g|webp|avif|heic|heif|gif|svg)(\?|#|$)/i.test(rawUrl))
     ) {
       const resolved = resolveRelativeUrl(baseUrl, rawUrl);
       if (resolved) return resolved;
     }
   }
   if (rawHtmlBody) {
-    const htmlSource = /<img\b/i.test(rawHtmlBody) ? rawHtmlBody : decodeHtmlEntities(rawHtmlBody);
+    const htmlSource = /<(img|source|video)\b/i.test(rawHtmlBody)
+      ? rawHtmlBody
+      : decodeHtmlEntities(rawHtmlBody);
     const imgTags = htmlSource.match(/<img\b[^>]*>/gi) || [];
     for (const tag of imgTags) {
       const attrs = parseHtmlAttributes(tag);
@@ -242,6 +278,29 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): 
         srcsetFirst;
       if (src) {
         const resolved = resolveRelativeUrl(baseUrl, src);
+        if (resolved) return resolved;
+      }
+    }
+    const sourceTags = htmlSource.match(/<source\b[^>]*>/gi) || [];
+    for (const tag of sourceTags) {
+      const attrs = parseHtmlAttributes(tag);
+      const src = attrs.srcset
+        ? attrs.srcset.split(",")[0]?.trim().split(/\s+/)[0] || ""
+        : attrs.src || "";
+      if (
+        src &&
+        (/image/i.test(attrs.type || "") ||
+          /\.(png|jpe?g|webp|avif|gif|svg)(\?|#|$)/i.test(src))
+      ) {
+        const resolved = resolveRelativeUrl(baseUrl, src);
+        if (resolved) return resolved;
+      }
+    }
+    const videoTags = htmlSource.match(/<video\b[^>]*>/gi) || [];
+    for (const tag of videoTags) {
+      const poster = parseHtmlAttributes(tag).poster || "";
+      if (poster) {
+        const resolved = resolveRelativeUrl(baseUrl, poster);
         if (resolved) return resolved;
       }
     }
@@ -360,12 +419,13 @@ export function parseSitemap(xmlText: string, siteName: string, baseUrl = ""): A
       .replace(/[-_]+/g, " ")
       .trim();
     const title = pretty ? pretty.replace(/\b\w/g, (c) => c.toUpperCase()) : loc;
+    const sitemapImage = extractImageFromEntry(node, loc);
     out.push({
       site: siteName,
       title,
       url: loc,
       summary: "",
-      image: "",
+      image: sitemapImage,
       published: parseDateSec(lastmod),
       guid: loc,
       tags: [],

@@ -62,14 +62,18 @@ export function sniffImageMime(buf: Buffer, headerCt: string, url: string): stri
     if (major === "avif" || major === "avis") {
       return "image/avif";
     }
-    const brandScanEnd = Math.min(buf.length, 64);
+    const ftypSize = buf.readUInt32BE(0);
+    const brandScanEnd =
+      ftypSize >= 16 && ftypSize <= buf.length
+        ? Math.min(ftypSize, 512)
+        : Math.min(buf.length, 64);
     for (let offset = 16; offset + 4 <= brandScanEnd; offset += 4) {
       const compat = buf.subarray(offset, offset + 4).toString("ascii");
       if (compat === "avif" || compat === "avis") {
         return "image/avif";
       }
     }
-    if (major === "heic" || major === "heix" || major === "mif1") {
+    if (major === "heic" || major === "heix" || major === "mif1" || major === "msf1") {
       return "image/heif";
     }
   }
@@ -79,12 +83,12 @@ export function sniffImageMime(buf: Buffer, headerCt: string, url: string): stri
   }
   const cleanCt = headerCt.split(";")[0].trim().toLowerCase();
   if (cleanCt.startsWith("image/")) return cleanCt;
-  if (/\.avif(\?|$)/i.test(url)) return "image/avif";
-  if (/\.webp(\?|$)/i.test(url)) return "image/webp";
-  if (/\.png(\?|$)/i.test(url)) return "image/png";
-  if (/\.jpe?g(\?|$)/i.test(url)) return "image/jpeg";
-  if (/\.gif(\?|$)/i.test(url)) return "image/gif";
-  if (/\.svg(\?|$)/i.test(url)) return "image/svg+xml";
+  if (/\.avif(\?|#|$)/i.test(url)) return "image/avif";
+  if (/\.webp(\?|#|$)/i.test(url)) return "image/webp";
+  if (/\.png(\?|#|$)/i.test(url)) return "image/png";
+  if (/\.jpe?g(\?|#|$)/i.test(url)) return "image/jpeg";
+  if (/\.gif(\?|#|$)/i.test(url)) return "image/gif";
+  if (/\.svg(\?|#|$)/i.test(url)) return "image/svg+xml";
   return "";
 }
 
