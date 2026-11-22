@@ -37,24 +37,45 @@ function mixRgb(
   return `rgb(${r},${g},${bl})`;
 }
 
-function sniffImageMime(buf: Buffer, headerCt: string, url: string): string {
+export function sniffImageMime(buf: Buffer, headerCt: string, url: string): string {
   if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
     return "image/png";
   }
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) {
     return "image/jpeg";
   }
-  if (buf.length >= 6 && (buf.subarray(0, 6).toString("ascii") === "GIF87a" || buf.subarray(0, 6).toString("ascii") === "GIF89a")) {
+  if (
+    buf.length >= 6 &&
+    (buf.subarray(0, 6).toString("ascii") === "GIF87a" || buf.subarray(0, 6).toString("ascii") === "GIF89a")
+  ) {
     return "image/gif";
   }
-  if (buf.length >= 12 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") {
+  if (
+    buf.length >= 12 &&
+    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buf.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
     return "image/webp";
   }
   if (buf.length >= 12 && buf.subarray(4, 8).toString("ascii") === "ftyp") {
-    const brand = buf.subarray(8, 12).toString("ascii");
-    if (brand === "avif" || brand === "avis") {
+    const major = buf.subarray(8, 12).toString("ascii");
+    if (major === "avif" || major === "avis") {
       return "image/avif";
     }
+    const brandScanEnd = Math.min(buf.length, 64);
+    for (let offset = 16; offset + 4 <= brandScanEnd; offset += 4) {
+      const compat = buf.subarray(offset, offset + 4).toString("ascii");
+      if (compat === "avif" || compat === "avis") {
+        return "image/avif";
+      }
+    }
+    if (major === "heic" || major === "heix" || major === "mif1") {
+      return "image/heif";
+    }
+  }
+  const headText = buf.subarray(0, Math.min(buf.length, 512)).toString("utf8").trimStart();
+  if (/^(?:<\?xml\b[^>]*>\s*)?<svg[\s>]/i.test(headText)) {
+    return "image/svg+xml";
   }
   const cleanCt = headerCt.split(";")[0].trim().toLowerCase();
   if (cleanCt.startsWith("image/")) return cleanCt;
@@ -63,6 +84,7 @@ function sniffImageMime(buf: Buffer, headerCt: string, url: string): string {
   if (/\.png(\?|$)/i.test(url)) return "image/png";
   if (/\.jpe?g(\?|$)/i.test(url)) return "image/jpeg";
   if (/\.gif(\?|$)/i.test(url)) return "image/gif";
+  if (/\.svg(\?|$)/i.test(url)) return "image/svg+xml";
   return "";
 }
 
@@ -84,9 +106,9 @@ async function fetchOgPhotoDataUri(url: string): Promise<string | null> {
     const mime = sniffImageMime(buf, ct, url);
     if (!mime) return null;
 
-    // Resvg only natively decodes PNG/JPEG/GIF; transcode AVIF, WebP, SVG, or other image formats to PNG
+    // Resvg only natively decodes PNG/JPEG/GIF; transcode AVIF, WebP, HEIF, SVG, or other formats to PNG
     if (mime !== "image/png" && mime !== "image/jpeg" && mime !== "image/gif") {
-      const pngBuf = await sharp(buf).png().toBuffer();
+      const pngBuf = await sharp(buf).rotate().png().toBuffer();
       if (pngBuf.length === 0) return null;
       return `data:image/png;base64,${pngBuf.toString("base64")}`;
     }

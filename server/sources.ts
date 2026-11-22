@@ -187,23 +187,36 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
 
 function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): string {
   const mediaGroups = asNodes(entry["media:group"]);
-  const candidates: Array<{ node: XmlNode; isThumbnail: boolean }> = [
+  const linkEnclosures = asNodes(entry.link).filter(
+    (l) => String(l["@_rel"] || "").toLowerCase() === "enclosure"
+  );
+  const candidates: Array<{ node: unknown; isThumbnail: boolean }> = [
     // 1. Explicit thumbnail nodes take strict priority over generic media attachments
-    ...asNodes(entry["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
+    ...toArray(entry["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
     ...mediaGroups.flatMap((g) =>
-      asNodes(g["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
+      toArray(g["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
     ),
-    ...asNodes(entry["itunes:image"]).map((node) => ({ node, isThumbnail: true })),
-    // 2. Generic media content & enclosures
-    ...asNodes(entry["media:content"]).map((node) => ({ node, isThumbnail: false })),
+    ...toArray(entry["itunes:image"]).map((node) => ({ node, isThumbnail: true })),
+    ...toArray(entry.thumbnail).map((node) => ({ node, isThumbnail: true })),
+    // 2. Generic media content, enclosures & Atom enclosure links
+    ...toArray(entry["media:content"]).map((node) => ({ node, isThumbnail: false })),
     ...mediaGroups.flatMap((g) =>
-      asNodes(g["media:content"]).map((node) => ({ node, isThumbnail: false }))
+      toArray(g["media:content"]).map((node) => ({ node, isThumbnail: false }))
     ),
-    ...asNodes(entry["enclosure"]).map((node) => ({ node, isThumbnail: false })),
+    ...toArray(entry["enclosure"]).map((node) => ({ node, isThumbnail: false })),
+    ...linkEnclosures.map((node) => ({ node, isThumbnail: false })),
+    ...toArray(entry.image).map((node) => ({ node, isThumbnail: false })),
   ];
-  for (const { node: c, isThumbnail } of candidates) {
-    const rawUrl = String(c["@_url"] || c["@_href"] || "").trim();
-    const typ = String(c["@_type"] || c["@_medium"] || "");
+  for (const { node: rawNode, isThumbnail } of candidates) {
+    let rawUrl = "";
+    let typ = "";
+    if (typeof rawNode === "string") {
+      rawUrl = rawNode.trim();
+    } else if (rawNode && typeof rawNode === "object") {
+      const c = rawNode as XmlNode;
+      rawUrl = String(c["@_url"] || c["@_href"] || textVal(c.url) || textVal(c) || "").trim();
+      typ = String(c["@_type"] || c["@_medium"] || "");
+    }
     if (
       rawUrl &&
       (isThumbnail || /image/i.test(typ) || /\.(png|jpe?g|webp|avif|gif)(\?|$)/i.test(rawUrl))
