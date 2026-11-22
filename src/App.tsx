@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   Globe,
@@ -49,21 +49,33 @@ export default function App() {
     article: Article;
   } | null>(null);
 
+  const bootstrapSeqRef = useRef(0);
+  const stateRef = useRef<BootstrapState | null>(null);
+  stateRef.current = state;
+
   const checkAuthAndLoad = useCallback(async () => {
-    setAuthLoading(true);
+    const seq = ++bootstrapSeqRef.current;
+    if (!stateRef.current) {
+      setAuthLoading(true);
+    }
     setLoadError("");
     setBackendMissing(false);
     try {
       const status = await api.getAuthStatus();
+      if (seq !== bootstrapSeqRef.current) return;
       setAuthStatus(status);
       if (status.authenticated) {
-        setLoading(true);
+        if (!stateRef.current) {
+          setLoading(true);
+        }
         const data = await api.bootstrap();
+        if (seq !== bootstrapSeqRef.current) return;
         setState(data);
       } else {
         setState(null);
       }
     } catch (err) {
+      if (seq !== bootstrapSeqRef.current) return;
       const msg = err instanceof Error ? err.message : "Failed to connect to AutoPost server";
       if (msg === "BACKEND_UNAVAILABLE") {
         setBackendMissing(true);
@@ -71,13 +83,16 @@ export default function App() {
         setLoadError(msg);
       }
     } finally {
-      setAuthLoading(false);
-      setLoading(false);
+      if (seq === bootstrapSeqRef.current) {
+        setAuthLoading(false);
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      bootstrapSeqRef.current += 1;
       setState(null);
       setAuthStatus((prev) =>
         prev
@@ -86,25 +101,44 @@ export default function App() {
       );
     });
     checkAuthAndLoad();
-    return () => setUnauthorizedHandler(null);
+    return () => {
+      bootstrapSeqRef.current += 1;
+      setUnauthorizedHandler(null);
+    };
   }, [checkAuthAndLoad]);
 
   useEffect(() => {
-    if (!state?.gravatarSyncPending) return;
+    if (!state?.gravatarSyncPending || !authStatus?.authenticated) return;
     let active = true;
-    const timer = setTimeout(async () => {
-      try {
-        const refreshed = await api.bootstrap();
-        if (active) setState(refreshed);
-      } catch {
-        // Ignore transient poll errors
-      }
-    }, 2200);
+    let polls = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pollSeq = bootstrapSeqRef.current;
+
+    const schedulePoll = () => {
+      if (!active || polls >= 15) return;
+      timer = setTimeout(async () => {
+        polls += 1;
+        try {
+          const refreshed = await api.bootstrap();
+          if (!active || pollSeq !== bootstrapSeqRef.current) return;
+          setState(refreshed);
+          if (refreshed.gravatarSyncPending) {
+            schedulePoll();
+          }
+        } catch {
+          if (active && pollSeq === bootstrapSeqRef.current) {
+            schedulePoll();
+          }
+        }
+      }, 2000);
+    };
+
+    schedulePoll();
     return () => {
       active = false;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
     };
-  }, [state?.gravatarSyncPending]);
+  }, [state?.gravatarSyncPending, authStatus?.authenticated]);
 
   async function handleAuthenticated(_user: AuthUser) {
     await checkAuthAndLoad();

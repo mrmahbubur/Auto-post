@@ -602,22 +602,26 @@ async function publishPinterest(
   imageUrl: string,
   article: Article,
   cfg: Record<string, unknown>,
+  copy: CopyDeck,
   userId?: string
 ): Promise<PublishResult> {
-  const boardId = String(cfg.board_id || "").trim();
+  const boardId = String(cfg.board_id || getSecret("PINTEREST_BOARD_ID", userId) || "").trim();
   if (!boardId || !imageUrl) {
     throw new Error("Pinterest board_id and a public image URL (media_host) are required");
   }
-  const res = await fetch("https://api.pinterest.com/v5/pins", {
+  const apiBase = String(cfg.api_base || "https://api.pinterest.com").replace(/\/+$/, "");
+  const res = await fetch(`${apiBase}/v5/pins`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${getSecret("PINTEREST_TOKEN", userId)}`,
       "Content-Type": "application/json",
+      "User-Agent": UA,
     },
     body: JSON.stringify({
       board_id: boardId,
       title: stripHtml(article.title, 95),
       description: text.slice(0, 480),
+      alt_text: stripHtml(copy.hook || article.title, 480),
       link: article.url,
       media_source: { source_type: "image_url", url: imageUrl },
     }),
@@ -663,7 +667,7 @@ export async function publishToPlatform(
     case "threads":
       return publishThreads(text, imageUrl, site, cfg, userId);
     case "pinterest":
-      return publishPinterest(text, imageUrl, article, cfg, userId);
+      return publishPinterest(text, imageUrl, article, cfg, copy, userId);
     default:
       throw new Error(`Unsupported platform: ${platformName}`);
   }
@@ -785,14 +789,18 @@ export async function verifyPlatformCredentials(
       return { detail: `Connected as @${d.username || uid}` };
     }
     case "pinterest": {
-      const boardId = String(cfg.board_id || "").trim();
+      const boardId = String(cfg.board_id || getSecret("PINTEREST_BOARD_ID", userId) || "").trim();
       const token = getSecret("PINTEREST_TOKEN", userId);
       if (!boardId || !token) throw new Error("Pinterest board_id and PINTEREST_TOKEN are required.");
-      const res = await fetch(`https://api.pinterest.com/v5/boards/${encodeURIComponent(boardId)}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const apiBase = String(cfg.api_base || "https://api.pinterest.com").replace(/\/+$/, "");
+      const res = await fetch(`${apiBase}/v5/boards/${encodeURIComponent(boardId)}`, {
+        headers: { Authorization: `Bearer ${token}`, "User-Agent": UA },
         signal: AbortSignal.timeout(15000),
       });
-      if (!res.ok) throw new Error(`Pinterest board verify failed (${res.status})`);
+      if (!res.ok) {
+        const errBody = (await res.text()).slice(0, 160);
+        throw new Error(`Pinterest board verify failed (${res.status}): ${errBody || res.statusText}`);
+      }
       const d = (await res.json()) as { name?: string };
       return { detail: `Board "${d.name || boardId}" verified` };
     }

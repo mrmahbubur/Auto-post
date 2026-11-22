@@ -207,23 +207,59 @@ function buildAuthHeaders(extra?: HeadersInit): Record<string, string> {
   return headers;
 }
 
+function getTimeoutForPath(url: string): number {
+  if (/\/api\/(runs|schedule\/run-now|gravatar\/|prepare|publish-prepared|discover-url)/.test(url)) {
+    return 90_000;
+  }
+  return 15_000;
+}
+
 async function request<T>(url: string, init?: RequestInit, skipAuthRedirect = false): Promise<T> {
   const target = apiUrl(url);
+  const controller = new AbortController();
+  const timeoutMs = getTimeoutForPath(url);
+  let timedOut = false;
+  const externalSignal = init?.signal;
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
   let res: Response;
   try {
     res = await fetch(target, {
       credentials: getApiBaseUrl() ? "omit" : "include",
       ...init,
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         ...buildAuthHeaders(init?.headers),
       },
     });
-  } catch {
+  } catch (err) {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
+    if (timedOut) {
+      throw new Error("Request timed out waiting for AutoPost server.");
+    }
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err;
+    }
     if (!getApiBaseUrl()) {
       throw new Error("BACKEND_UNAVAILABLE");
     }
     throw new Error(`Unable to reach backend server at ${getApiBaseUrl()}. Verify the server is running and CORS is enabled.`);
+  } finally {
+    clearTimeout(timer);
+    if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
   const contentType = res.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
@@ -493,6 +529,7 @@ export const api = {
     const res = await fetch(apiUrl("/api/config.yaml"), {
       credentials: getApiBaseUrl() ? "omit" : "include",
       headers: buildAuthHeaders(),
+      signal: AbortSignal.timeout(20_000),
     });
     if (res.status === 401) {
       setStoredToken("");
@@ -513,6 +550,7 @@ export const api = {
     const res = await fetch(apiUrl(`/api/images/${encodeURIComponent(filename)}`), {
       credentials: getApiBaseUrl() ? "omit" : "include",
       headers: buildAuthHeaders(),
+      signal: AbortSignal.timeout(20_000),
     });
     if (res.status === 401) {
       setStoredToken("");
@@ -528,6 +566,7 @@ export const api = {
     const res = await fetch(apiUrl(`/api/runs/${encodeURIComponent(runId)}/report.html`), {
       credentials: getApiBaseUrl() ? "omit" : "include",
       headers: buildAuthHeaders(),
+      signal: AbortSignal.timeout(20_000),
     });
     if (res.status === 401) {
       setStoredToken("");

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Plus, RefreshCw, Rss, Sparkles, Trash2, UserCheck } from "lucide-react";
 import { api } from "../api";
 import type { Article, BootstrapState, SiteConfig } from "../types";
@@ -34,6 +34,13 @@ export function SitesView({ state, onStateChange, onOpenInComposer }: SitesViewP
   );
   const [syncingGrav, setSyncingGrav] = useState(false);
   const [syncResultMsg, setSyncResultMsg] = useState("");
+
+  useEffect(() => {
+    const incoming = state.gravatar?.identifier || state.user?.email || "";
+    if (!gravIdentifier && incoming) {
+      setGravIdentifier(incoming);
+    }
+  }, [state.gravatar?.identifier, state.user?.email, gravIdentifier]);
 
   const [testingSiteId, setTestingSiteId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<{ siteId: string; articles: Article[]; lookbackDays: number } | null>(null);

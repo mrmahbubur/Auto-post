@@ -425,7 +425,9 @@ export async function runSchedulerTick(): Promise<void> {
       const sched = getUserSchedule(userId);
       if (!sched.enabled || !sched.next_run_at) continue;
       if (sched.next_run_at <= now && !activeRuns.has(userId)) {
-        const sites = listSites(userId).filter((s) => s.enabled);
+        const sites = listSites(userId).filter(
+          (s) => s.enabled && (!sched.gravatar_only || s.source === "gravatar")
+        );
         const grav = getUserGravatarConnection(userId);
         // Only run background scheduled tick when the user has sites OR a synced Gravatar identifier configured
         if (sites.length === 0 && !grav.identifier) {

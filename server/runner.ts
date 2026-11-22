@@ -6,6 +6,7 @@ import {
   DEFAULT_AI_SETTINGS,
   DEFAULT_MEDIA_HOST,
   DEFAULT_RUN_SETTINGS,
+  DEFAULT_SCHEDULE_SETTINGS,
   DEFAULT_THUMB_SETTINGS,
   getSetting,
   listPlatformStates,
@@ -32,6 +33,7 @@ import type {
   RunItemResult,
   RunRecord,
   RunSettings,
+  ScheduleSettings,
   SiteConfig,
   ThumbnailSettings,
 } from "./types.ts";
@@ -459,11 +461,13 @@ export function renderStandaloneReportHtml(run: RunRecord, userId?: string): str
 export function exportConfigYaml(userId: string): string {
   const run = getSetting<RunSettings>("run", DEFAULT_RUN_SETTINGS, userId);
   const ai = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
+  const schedule = getSetting<ScheduleSettings>("schedule", DEFAULT_SCHEDULE_SETTINGS, userId);
   const thumbnail = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
   const media_host = getSetting<MediaHostSettings>("media_host", DEFAULT_MEDIA_HOST, userId);
   const sites = listSites(userId).map((s) => ({
     name: s.name,
     url: s.url,
+    source: s.source || "manual",
     ...(s.feed ? { feed: s.feed } : {}),
     ...(s.sitemap ? { sitemap: s.sitemap } : {}),
     brand_color: s.brand_color,
@@ -476,7 +480,7 @@ export function exportConfigYaml(userId: string): string {
     platforms[p.meta.name] = { enabled: p.enabled, ...p.config };
   }
 
-  return YAML.stringify({ run, ai, sites, platforms, thumbnail, media_host });
+  return YAML.stringify({ run, ai, schedule, sites, platforms, thumbnail, media_host });
 }
 
 export function importConfigYaml(rawYaml: string, userId: string): void {
@@ -489,6 +493,23 @@ export function importConfigYaml(rawYaml: string, userId: string): void {
   }
   if (parsed.ai && typeof parsed.ai === "object") {
     setSetting("ai", parsed.ai, userId);
+  }
+  if (parsed.schedule && typeof parsed.schedule === "object") {
+    const incoming = parsed.schedule as Partial<ScheduleSettings>;
+    const current = getSetting<ScheduleSettings>("schedule", DEFAULT_SCHEDULE_SETTINGS, userId);
+    setSetting(
+      "schedule",
+      {
+        ...DEFAULT_SCHEDULE_SETTINGS,
+        ...current,
+        ...incoming,
+        gravatar_only:
+          typeof incoming.gravatar_only === "boolean"
+            ? incoming.gravatar_only
+            : current.gravatar_only ?? true,
+      },
+      userId
+    );
   }
   if (parsed.thumbnail && typeof parsed.thumbnail === "object") {
     setSetting("thumbnail", parsed.thumbnail, userId);
@@ -511,6 +532,7 @@ export function importConfigYaml(rawYaml: string, userId: string): void {
           hashtags: Array.isArray(s.hashtags) ? s.hashtags.map(String) : [],
           handles: (s.handles && typeof s.handles === "object" ? s.handles : {}) as Record<string, string>,
           enabled: true,
+          source: s.source === "gravatar" ? "gravatar" : "manual",
         },
         userId
       );

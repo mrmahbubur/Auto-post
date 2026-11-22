@@ -756,7 +756,11 @@ export function listPlatformStates(userId: string): Array<{
       missing_env.push("page_id (config)");
     } else if (meta.name === "linkedin" && !String(config.author_urn || "").trim()) {
       missing_env.push("author_urn (config)");
-    } else if (meta.name === "pinterest" && !String(config.board_id || "").trim()) {
+    } else if (
+      meta.name === "pinterest" &&
+      !String(config.board_id || "").trim() &&
+      !getSecret("PINTEREST_BOARD_ID", userId)
+    ) {
       missing_env.push("board_id (config)");
     }
 

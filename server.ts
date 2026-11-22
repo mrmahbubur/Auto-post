@@ -112,6 +112,7 @@ const ALL_SECRET_KEYS = [
   "X_ACCESS_SECRET",
   "THREADS_TOKEN",
   "PINTEREST_TOKEN",
+  "PINTEREST_BOARD_ID",
   "GITHUB_TOKEN",
 ];
 
@@ -278,9 +279,13 @@ async function startServer() {
       saveUserSchedule(user.id, {});
       // Start Gravatar linked-site discovery from signup email; return after <= 2.5s and notify client via gravatarSyncPending if still completing
       setInitialGravatarSyncInFlight(user.id, true);
+      const syncSafetyTimer = setTimeout(() => {
+        setInitialGravatarSyncInFlight(user.id, false);
+      }, 30_000);
       const gravPromise = syncGravatarForUser(user.id, cleanEmail, true)
         .catch(() => null)
         .finally(() => {
+          clearTimeout(syncSafetyTimer);
           setInitialGravatarSyncInFlight(user.id, false);
         });
       await Promise.race([gravPromise, new Promise((r) => setTimeout(r, 2500))]);
@@ -538,9 +543,39 @@ async function startServer() {
         res.status(400).json({ error: "URL is required." });
         return;
       }
+      const cleanUrl = url.trim();
       const sites = listSites(userId);
-      const site = sites.find((s) => s.id === siteId) || sites[0] || buildAdHocSite(url.trim());
-      const article = await discoverUrl(url.trim(), site);
+      const schedule = getUserSchedule(userId);
+      if (schedule.gravatar_only) {
+        const gravSites = sites.filter((s) => s.source === "gravatar");
+        let urlHost = "";
+        try {
+          urlHost = new URL(/^https?:\/\//i.test(cleanUrl) ? cleanUrl : `https://${cleanUrl}`).hostname.replace(/^www\./, "");
+        } catch {
+          // leave empty
+        }
+        const matched =
+          (siteId ? gravSites.find((s) => s.id === siteId) : undefined) ||
+          gravSites.find((s) => {
+            try {
+              return new URL(s.url).hostname.replace(/^www\./, "") === urlHost;
+            } catch {
+              return false;
+            }
+          });
+        if (!matched) {
+          res.status(400).json({
+            error:
+              "Gravatar-only mode is active: only URLs from websites included on your connected Gravatar profile can be fetched.",
+          });
+          return;
+        }
+        const article = await discoverUrl(cleanUrl, matched);
+        res.json({ article });
+        return;
+      }
+      const site = sites.find((s) => s.id === siteId) || sites[0] || buildAdHocSite(cleanUrl);
+      const article = await discoverUrl(cleanUrl, site);
       res.json({ article });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : "URL fetch failed" });
@@ -556,7 +591,35 @@ async function startServer() {
         return;
       }
       const sites = listSites(userId);
-      const site = sites.find((s) => s.id === siteId) || sites[0] || buildAdHocSite(article.url);
+      const schedule = getUserSchedule(userId);
+      let site: SiteConfig | undefined;
+      if (schedule.gravatar_only) {
+        const gravSites = sites.filter((s) => s.source === "gravatar");
+        let articleHost = "";
+        try {
+          articleHost = new URL(article.url).hostname.replace(/^www\./, "");
+        } catch {
+          // ignore
+        }
+        site =
+          (siteId ? gravSites.find((s) => s.id === siteId) : undefined) ||
+          gravSites.find((s) => {
+            try {
+              return new URL(s.url).hostname.replace(/^www\./, "") === articleHost;
+            } catch {
+              return false;
+            }
+          });
+        if (!site) {
+          res.status(400).json({
+            error:
+              "Gravatar-only mode is active: only articles from websites included on your connected Gravatar profile can be prepared.",
+          });
+          return;
+        }
+      } else {
+        site = sites.find((s) => s.id === siteId) || sites[0] || buildAdHocSite(article.url);
+      }
       const aiSettings = getSetting<AiSettings>("ai", DEFAULT_AI_SETTINGS, userId);
       const thumbSettings = getSetting<ThumbnailSettings>("thumbnail", DEFAULT_THUMB_SETTINGS, userId);
 

@@ -23,7 +23,7 @@
       (function () {
         var loaded = false;
         window.__loadStaticApp = function () {
-          if (loaded || window.__AUTOPOST_MOUNTED__) return;
+          if (loaded || window.__AUTOPOST_MOUNTED__ || window.__AUTOPOST_MOUNTING__) return;
           loaded = true;
           var link = document.createElement('link');
           link.rel = 'stylesheet';
@@ -38,8 +38,10 @@
           window.__loadStaticApp();
         } else {
           setTimeout(function () {
-            if (!window.__AUTOPOST_MOUNTED__) window.__loadStaticApp();
-          }, 1200);
+            if (!window.__AUTOPOST_MOUNTED__ && !window.__AUTOPOST_MOUNTING__) {
+              window.__loadStaticApp();
+            }
+          }, 4000);
         }
       })();
     </script>

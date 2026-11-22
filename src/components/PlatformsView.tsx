@@ -21,7 +21,10 @@ const PLATFORM_CONFIG_FIELDS: Record<
   facebook_page: [{ key: "page_id", label: "Facebook Page ID", placeholder: "1234567890" }],
   linkedin: [{ key: "author_urn", label: "Author URN", placeholder: "urn:li:person:XXXX" }],
   threads: [{ key: "user_id", label: "Threads User ID", placeholder: "me" }],
-  pinterest: [{ key: "board_id", label: "Pinterest Board ID", placeholder: "1234567890" }],
+  pinterest: [
+    { key: "board_id", label: "Pinterest Board ID", placeholder: "1234567890" },
+    { key: "api_base", label: "API Base URL (optional sandbox)", placeholder: "https://api.pinterest.com" },
+  ],
 };
 
 export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
@@ -119,7 +122,9 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-base font-semibold text-slate-900">11 Official Platform Publishers</h2>
+          <h2 className="text-base font-semibold text-slate-900">
+            {state.platforms.length} Official Platform Publishers
+          </h2>
           <p className="text-sm text-slate-500 mt-0.5">
             Credentials are stored strictly server-side in SQLite and never sent back to the browser. Missing credentials safely skip during live runs.
           </p>
@@ -128,7 +133,7 @@ export function PlatformsView({ state, onStateChange }: PlatformsViewProps) {
         <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-lg self-start">
           {(
             [
-              ["all", "All (11)"],
+              ["all", `All (${state.platforms.length})`],
               ["enabled", `Enabled (${state.platforms.filter((p) => p.enabled).length})`],
               ["ready", `Ready (${state.platforms.filter((p) => p.ready).length})`],
             ] as const

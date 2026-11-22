@@ -156,10 +156,27 @@ export function PipelineView({
     setSchedDraft(state.schedule);
   }, [state.schedule]);
 
-  // Hydrate generated post & thumbnail from SQLite state.stagedPost
+  // Keep Gravatar identifier input hydrated if async bootstrap updates it
+  useEffect(() => {
+    const incoming = state.gravatar?.identifier || state.user?.email || "";
+    if (!gravSyncInput && incoming) {
+      setGravSyncInput(incoming);
+    }
+  }, [state.gravatar?.identifier, state.user?.email, gravSyncInput]);
+
+  // Hydrate or clear generated post & thumbnail from SQLite state.stagedPost
   useEffect(() => {
     const staged = state.stagedPost;
-    if (!staged) return;
+    if (!staged) {
+      if (hydratedGeneratedAt !== null) {
+        setActiveSite(null);
+        setActiveArticle(null);
+        setCopyDeck(null);
+        setImageFilename("");
+        setHydratedGeneratedAt(null);
+      }
+      return;
+    }
     if (staged.generated_at !== hydratedGeneratedAt) {
       setActiveSite(staged.site);
       setSelectedSiteId(staged.site.id);

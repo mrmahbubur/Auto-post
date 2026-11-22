@@ -1,5 +1,5 @@
 import {Component, type ReactNode} from 'react';
-import {createRoot} from 'react-dom/client';
+import {createRoot, type Root} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
@@ -35,12 +35,22 @@ class ErrorBoundary extends Component<{children: ReactNode}, ErrorBoundaryState>
   }
 }
 
-const win = window as unknown as { __AUTOPOST_MOUNTED__?: boolean };
-if (!win.__AUTOPOST_MOUNTED__) {
-  win.__AUTOPOST_MOUNTED__ = true;
-  createRoot(document.getElementById('root')!).render(
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  );
+const win = window as unknown as {
+  __AUTOPOST_MOUNTING__?: boolean;
+  __AUTOPOST_MOUNTED__?: boolean;
+  __AUTOPOST_ROOT__?: Root;
+};
+
+if (!win.__AUTOPOST_MOUNTED__ && !win.__AUTOPOST_MOUNTING__) {
+  win.__AUTOPOST_MOUNTING__ = true;
+  const container = document.getElementById('root');
+  if (container) {
+    win.__AUTOPOST_ROOT__ = win.__AUTOPOST_ROOT__ || createRoot(container);
+    win.__AUTOPOST_MOUNTED__ = true;
+    win.__AUTOPOST_ROOT__.render(
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
+    );
+  }
 }

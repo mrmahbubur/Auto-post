@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, KeyRound, Loader2, LogOut, Shield, ShieldAlert } from "lucide-react";
 import { api, clearApiBaseUrl, getApiBaseUrl, probeApiBaseUrl, setApiBaseUrl } from "../api";
 import type { BootstrapState } from "../types";
@@ -27,6 +27,10 @@ export function AccountView({ state, onStateChange, onSignedOut, onServerChanged
   const [editingEndpoint, setEditingEndpoint] = useState(false);
   const [endpointInput, setEndpointInput] = useState(() => getApiBaseUrl());
   const [checkingEndpoint, setCheckingEndpoint] = useState(false);
+
+  useEffect(() => {
+    setActiveSessions(security.activeSessionsCount);
+  }, [security.activeSessionsCount]);
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
