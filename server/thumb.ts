@@ -57,20 +57,52 @@ export function sniffImageMime(buf: Buffer, headerCt: string, url: string): stri
   ) {
     return "image/webp";
   }
+  if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) {
+    return "image/bmp";
+  }
+  if (
+    buf.length >= 4 &&
+    ((buf[0] === 0x49 && buf[1] === 0x49 && buf[2] === 0x2a && buf[3] === 0x00) ||
+      (buf[0] === 0x4d && buf[1] === 0x4d && buf[2] === 0x00 && buf[3] === 0x2a))
+  ) {
+    return "image/tiff";
+  }
+  if (buf.length >= 4 && buf[0] === 0x00 && buf[1] === 0x00 && buf[2] === 0x01 && buf[3] === 0x00) {
+    return "image/x-icon";
+  }
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0x0a) {
+    return "image/jxl";
+  }
   if (buf.length >= 12 && buf.subarray(4, 8).toString("ascii") === "ftyp") {
-    const major = buf.subarray(8, 12).toString("ascii");
+    const rawSize = buf.readUInt32BE(0);
+    // Support standard 32-bit ftyp sizes and 64-bit extended size (rawSize === 1, largesize at bytes 8..16)
+    const isExtended = rawSize === 1 && buf.length >= 24;
+    const majorOffset = isExtended ? 16 : 8;
+    const compatStart = isExtended ? 24 : 16;
+    const ftypEnd =
+      rawSize === 0
+        ? buf.length
+        : isExtended
+          ? Number(buf.readBigUInt64BE(8))
+          : rawSize;
+    const major = buf.subarray(majorOffset, majorOffset + 4).toString("ascii");
     if (major === "avif" || major === "avis") {
       return "image/avif";
     }
-    const ftypSize = buf.readUInt32BE(0);
+    if (major === "jxl ") {
+      return "image/jxl";
+    }
     const brandScanEnd =
-      ftypSize >= 16 && ftypSize <= buf.length
-        ? Math.min(ftypSize, 512)
-        : Math.min(buf.length, 64);
-    for (let offset = 16; offset + 4 <= brandScanEnd; offset += 4) {
+      ftypEnd >= compatStart && ftypEnd <= buf.length
+        ? Math.min(ftypEnd, 4096)
+        : Math.min(buf.length, 4096);
+    for (let offset = compatStart; offset + 4 <= brandScanEnd; offset += 4) {
       const compat = buf.subarray(offset, offset + 4).toString("ascii");
       if (compat === "avif" || compat === "avis") {
         return "image/avif";
+      }
+      if (compat === "jxl ") {
+        return "image/jxl";
       }
     }
     if (major === "heic" || major === "heix" || major === "mif1" || major === "msf1") {
@@ -83,12 +115,19 @@ export function sniffImageMime(buf: Buffer, headerCt: string, url: string): stri
   }
   const cleanCt = headerCt.split(";")[0].trim().toLowerCase();
   if (cleanCt.startsWith("image/")) return cleanCt;
-  if (/\.avif(\?|#|$)/i.test(url)) return "image/avif";
-  if (/\.webp(\?|#|$)/i.test(url)) return "image/webp";
-  if (/\.png(\?|#|$)/i.test(url)) return "image/png";
-  if (/\.jpe?g(\?|#|$)/i.test(url)) return "image/jpeg";
-  if (/\.gif(\?|#|$)/i.test(url)) return "image/gif";
-  if (/\.svg(\?|#|$)/i.test(url)) return "image/svg+xml";
+  const cleanUrlPath = url.split(/[?#]/)[0];
+  if (/\.(avif|avifs)$/i.test(cleanUrlPath)) return "image/avif";
+  if (/\.webp$/i.test(cleanUrlPath)) return "image/webp";
+  if (/\.png$/i.test(cleanUrlPath)) return "image/png";
+  if (/\.apng$/i.test(cleanUrlPath)) return "image/apng";
+  if (/\.(jpe?g|jfif|pjpeg|pjp)$/i.test(cleanUrlPath)) return "image/jpeg";
+  if (/\.gif$/i.test(cleanUrlPath)) return "image/gif";
+  if (/\.svg$/i.test(cleanUrlPath)) return "image/svg+xml";
+  if (/\.(heic|heif)$/i.test(cleanUrlPath)) return "image/heif";
+  if (/\.bmp$/i.test(cleanUrlPath)) return "image/bmp";
+  if (/\.tiff?$/i.test(cleanUrlPath)) return "image/tiff";
+  if (/\.ico$/i.test(cleanUrlPath)) return "image/x-icon";
+  if (/\.jxl$/i.test(cleanUrlPath)) return "image/jxl";
   return "";
 }
 

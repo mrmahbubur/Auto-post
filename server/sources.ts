@@ -185,50 +185,99 @@ export function extractHtmlMetadata(html: string, pageUrl: string): ExtractedHtm
   };
 }
 
+const IMAGE_EXT_RE = /\.(png|apng|jpe?g|jfif|pjpeg|pjp|webp|avif|heic|heif|gif|svg|bmp|tiff?|ico|jxl)(\?|#|$)/i;
+
+function collectNestedNodesByKey(root: unknown, keys: string[], maxDepth = 4): unknown[] {
+  const out: unknown[] = [];
+  const seen = new Set<unknown>();
+  const keySet = new Set(keys);
+
+  const walk = (node: unknown, depth: number) => {
+    if (!node || typeof node !== "object" || depth > maxDepth || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth);
+      return;
+    }
+    const obj = node as XmlNode;
+    for (const [k, v] of Object.entries(obj)) {
+      if (k.startsWith("@_")) continue;
+      if (keySet.has(k)) {
+        out.push(...toArray(v));
+      }
+      if (v && typeof v === "object") {
+        walk(v, depth + 1);
+      }
+    }
+  };
+
+  walk(root, 0);
+  return out;
+}
+
 function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): string {
   const mediaGroups = asNodes(entry["media:group"]);
   const mediaContents = asNodes(entry["media:content"]);
   const groupMediaContents = mediaGroups.flatMap((g) => asNodes(g["media:content"]));
   const linkNodes = asNodes(entry.link);
-  const linkEnclosures = linkNodes.filter((l) => {
+
+  const thumbRelSet = new Set(["thumbnail", "preview", "cover", "hero", "banner"]);
+  const mediaRelSet = new Set(["enclosure", "attachment", "media", "photo", "image", "icon", "logo"]);
+  const conditionalRelSet = new Set(["related", "alternate"]);
+
+  const linkThumbnails: XmlNode[] = [];
+  const linkEnclosures: XmlNode[] = [];
+  for (const l of linkNodes) {
     const tokens = String(l["@_rel"] || "")
       .toLowerCase()
       .split(/\s+/)
       .filter(Boolean);
-    return (
-      tokens.includes("enclosure") ||
-      tokens.includes("preview") ||
-      tokens.includes("thumbnail") ||
-      (tokens.includes("image") && /image/i.test(String(l["@_type"] || "")))
-    );
-  });
+    const typ = String(l["@_type"] || "");
+    const href = String(l["@_href"] || l["@_url"] || "");
+    const looksLikeImage = /image/i.test(typ) || IMAGE_EXT_RE.test(href);
+    if (tokens.some((t) => thumbRelSet.has(t))) {
+      linkThumbnails.push(l);
+    } else if (
+      tokens.some((t) => mediaRelSet.has(t)) ||
+      (tokens.some((t) => conditionalRelSet.has(t)) && looksLikeImage)
+    ) {
+      linkEnclosures.push(l);
+    }
+  }
+
+  const xhtmlNodes = [entry.content, entry["content:encoded"], entry.description, entry.summary];
+  const nestedMediaThumbnails = collectNestedNodesByKey(
+    [...mediaGroups, ...mediaContents],
+    ["media:thumbnail", "thumbnail"]
+  );
+  const nestedMediaContents = collectNestedNodesByKey(
+    mediaGroups,
+    ["media:content", "enclosure"]
+  );
+  const nestedXhtmlImages = collectNestedNodesByKey(xhtmlNodes, ["img", "source"]);
+
   const candidates: Array<{ node: unknown; isThumbnail: boolean }> = [
     // 1. Explicit thumbnail nodes take strict priority over generic media attachments
     ...toArray(entry["media:thumbnail"]).map((node) => ({ node, isThumbnail: true })),
-    ...mediaGroups.flatMap((g) =>
-      toArray(g["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
-    ),
-    ...mediaContents.flatMap((mc) =>
-      toArray(mc["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
-    ),
-    ...groupMediaContents.flatMap((mc) =>
-      toArray(mc["media:thumbnail"]).map((node) => ({ node, isThumbnail: true }))
-    ),
+    ...nestedMediaThumbnails.map((node) => ({ node, isThumbnail: true })),
     ...toArray(entry["itunes:image"]).map((node) => ({ node, isThumbnail: true })),
     ...toArray(entry.thumbnail).map((node) => ({ node, isThumbnail: true })),
     ...toArray(entry.featuredImage).map((node) => ({ node, isThumbnail: true })),
     ...toArray(entry.featured_image).map((node) => ({ node, isThumbnail: true })),
     ...toArray(entry.coverImage).map((node) => ({ node, isThumbnail: true })),
     ...toArray(entry.cover_image).map((node) => ({ node, isThumbnail: true })),
-    // 2. Generic media content, enclosures, Atom enclosure links & image tags
+    ...linkThumbnails.map((node) => ({ node, isThumbnail: true })),
+    // 2. Generic media content, nested group items, enclosures, Atom/RSS link rels & image tags
     ...mediaContents.map((node) => ({ node, isThumbnail: false })),
     ...groupMediaContents.map((node) => ({ node, isThumbnail: false })),
+    ...nestedMediaContents.map((node) => ({ node, isThumbnail: false })),
     ...toArray(entry["enclosure"]).map((node) => ({ node, isThumbnail: false })),
     ...linkEnclosures.map((node) => ({ node, isThumbnail: false })),
     ...toArray(entry["image:image"]).map((node) => ({ node, isThumbnail: false })),
     ...toArray(entry.image).map((node) => ({ node, isThumbnail: false })),
     ...toArray(entry.poster).map((node) => ({ node, isThumbnail: false })),
     ...toArray(entry.photo).map((node) => ({ node, isThumbnail: false })),
+    ...nestedXhtmlImages.map((node) => ({ node, isThumbnail: false })),
   ];
   for (const { node: rawNode, isThumbnail } of candidates) {
     let rawUrl = "";
@@ -237,10 +286,18 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): 
       rawUrl = rawNode.trim();
     } else if (rawNode && typeof rawNode === "object") {
       const c = rawNode as XmlNode;
+      if (String(c["@_width"] || "") === "1" || String(c["@_height"] || "") === "1") {
+        continue;
+      }
+      const srcsetFirst =
+        typeof c["@_srcset"] === "string"
+          ? c["@_srcset"].split(",")[0]?.trim().split(/\s+/)[0] || ""
+          : "";
       rawUrl = String(
         c["@_url"] ||
           c["@_href"] ||
           c["@_src"] ||
+          srcsetFirst ||
           textVal(c.url) ||
           textVal(c["image:loc"]) ||
           textVal(c.loc) ||
@@ -249,12 +306,7 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): 
       ).trim();
       typ = String(c["@_type"] || c["@_medium"] || "");
     }
-    if (
-      rawUrl &&
-      (isThumbnail ||
-        /image/i.test(typ) ||
-        /\.(png|jpe?g|webp|avif|heic|heif|gif|svg)(\?|#|$)/i.test(rawUrl))
-    ) {
+    if (rawUrl && (isThumbnail || /image/i.test(typ) || IMAGE_EXT_RE.test(rawUrl))) {
       const resolved = resolveRelativeUrl(baseUrl, rawUrl);
       if (resolved) return resolved;
     }
@@ -287,11 +339,7 @@ function extractImageFromEntry(entry: XmlNode, baseUrl = "", rawHtmlBody = ""): 
       const src = attrs.srcset
         ? attrs.srcset.split(",")[0]?.trim().split(/\s+/)[0] || ""
         : attrs.src || "";
-      if (
-        src &&
-        (/image/i.test(attrs.type || "") ||
-          /\.(png|jpe?g|webp|avif|gif|svg)(\?|#|$)/i.test(src))
-      ) {
+      if (src && (/image/i.test(attrs.type || "") || IMAGE_EXT_RE.test(src))) {
         const resolved = resolveRelativeUrl(baseUrl, src);
         if (resolved) return resolved;
       }
